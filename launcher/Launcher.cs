@@ -14,14 +14,15 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("把 IDM 下载的视频自动中转导入 Eagle")]
 [assembly: AssemblyProduct("下载中转站")]
 [assembly: AssemblyCompany("下载中转站")]
-[assembly: AssemblyVersion("0.5.0.0")]
-[assembly: AssemblyFileVersion("0.5.0.0")]
+[assembly: AssemblyVersion("0.6.0.0")]
+[assembly: AssemblyFileVersion("0.6.0.0")]
 
 internal static class Launcher
 {
     private const string TrayMutexName = @"Local\IdmEagleAutoImportTray";
     private const string ShowEventName = @"Local\IdmEagleAutoImportShow";
     private const string RulesEventName = @"Local\IdmEagleAutoImportRules";
+    private const string UpdateEventName = @"Local\IdmEagleAutoImportUpdate";
     private const string QuitEventName = @"Local\IdmEagleAutoImportQuit";
     private const string WakeEventName = @"Local\IdmEagleAutoImportWake";
 
@@ -275,7 +276,7 @@ internal static class Launcher
             child = childProcess;
             ChildExitCode = 0;
 
-            ToolStripMenuItem statusItem = new ToolStripMenuItem("下载中转站 0.5.0");
+            ToolStripMenuItem statusItem = new ToolStripMenuItem("下载中转站 0.6.0");
             statusItem.Enabled = false;
             ToolStripMenuItem openItem = new ToolStripMenuItem("打开记录");
             openItem.Font = new Font(openItem.Font, FontStyle.Bold);
@@ -284,6 +285,8 @@ internal static class Launcher
             checkItem.Click += delegate { SignalEvent(WakeEventName); };
             ToolStripMenuItem rulesItem = new ToolStripMenuItem("网站规则");
             rulesItem.Click += delegate { SignalEvent(RulesEventName); };
+            ToolStripMenuItem updateItem = new ToolStripMenuItem("检查软件更新");
+            updateItem.Click += delegate { SignalEvent(UpdateEventName); };
             ToolStripMenuItem exitItem = new ToolStripMenuItem("退出助手");
             exitItem.Click += delegate { RequestExit(); };
 
@@ -294,6 +297,7 @@ internal static class Launcher
             menu.Items.Add(openItem);
             menu.Items.Add(rulesItem);
             menu.Items.Add(checkItem);
+            menu.Items.Add(updateItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(exitItem);
 

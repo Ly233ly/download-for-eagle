@@ -6,6 +6,7 @@ from ctypes import wintypes
 
 SHOW_EVENT_NAME = "Local\\IdmEagleAutoImportShow"
 RULES_EVENT_NAME = "Local\\IdmEagleAutoImportRules"
+UPDATE_EVENT_NAME = "Local\\IdmEagleAutoImportUpdate"
 QUIT_EVENT_NAME = "Local\\IdmEagleAutoImportQuit"
 WAIT_OBJECT_0 = 0
 
@@ -34,6 +35,7 @@ class ControlSignals:
     def __init__(self) -> None:
         self._show_handle = self._create(SHOW_EVENT_NAME)
         self._rules_handle = self._create(RULES_EVENT_NAME)
+        self._update_handle = self._create(UPDATE_EVENT_NAME)
         self._quit_handle = self._create(QUIT_EVENT_NAME)
 
     @staticmethod
@@ -56,8 +58,16 @@ class ControlSignals:
     def poll_rules(self) -> bool:
         return self._poll(self._rules_handle)
 
+    def poll_update(self) -> bool:
+        return self._poll(self._update_handle)
+
     def close(self) -> None:
-        for attribute in ("_show_handle", "_rules_handle", "_quit_handle"):
+        for attribute in (
+            "_show_handle",
+            "_rules_handle",
+            "_update_handle",
+            "_quit_handle",
+        ):
             handle = getattr(self, attribute, None)
             if handle:
                 kernel32.CloseHandle(handle)

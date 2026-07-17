@@ -5,7 +5,9 @@ import sys
 import time
 import webbrowser
 import json
+import threading
 from pathlib import Path
+from queue import Empty, Queue
 from tkinter import BOTH, END, LEFT, RIGHT, X, StringVar, Tk, Toplevel, filedialog, messagebox, simpledialog
 from tkinter import ttk
 from urllib.parse import urlsplit
@@ -17,6 +19,15 @@ from .database import Database
 from .eagle import EagleClient, EagleImportError, EagleUnavailable
 from .security import PairingManager
 from .service import ProcessingService
+from .updater import (
+    UpdateError,
+    UpdateInfo,
+    automatic_check_due,
+    check_for_update,
+    launch_installer,
+    prepare_update,
+    record_successful_check,
+)
 from .url_utils import InvalidPageUrl, clean_page_url, normalize_domain
 
 
@@ -252,9 +263,15 @@ class MainWindow:
         self.status_text = StringVar()
         self.pairing_text = StringVar()
         self.site_rules_text = StringVar(value="网站规则")
+        self.update_button_text = StringVar(value="检查更新")
         self.control_signals = ControlSignals() if external_tray else None
         self.control_after_id: str | None = None
         self.refresh_after_id: str | None = None
+        self.update_poll_after_id: str | None = None
+        self.auto_update_after_id: str | None = None
+        self.update_events: Queue[tuple[str, object]] = Queue()
+        self.update_checking = False
+        self.update_downloading = False
         self.visible = not self.start_hidden
         self.site_rules_window: SiteRulesWindow | None = None
         self.last_jobs_revision: tuple[int, float] | None = None
@@ -264,6 +281,7 @@ class MainWindow:
         self.refresh()
         if self.control_signals:
             self.control_after_id = self.root.after(250, self._poll_control_signals)
+        self.auto_update_after_id = self.root.after(10000, self._automatic_update_check)
 
     def _build(self) -> None:
         outer = ttk.Frame(self.root, padding=16)
@@ -296,6 +314,12 @@ class MainWindow:
         ttk.Button(pairing, textvariable=self.site_rules_text, command=self.show_site_rules).pack(
             side=LEFT, padx=(8, 0)
         )
+        self.update_button = ttk.Button(
+            pairing,
+            textvariable=self.update_button_text,
+            command=self.check_for_updates,
+        )
+        self.update_button.pack(side=RIGHT)
 
         columns = ("time", "status", "file", "source", "message")
         self.tree = ttk.Treeview(outer, columns=columns, show="headings", selectmode="browse")
@@ -350,7 +374,133 @@ class MainWindow:
         if self.control_signals.poll_rules():
             self.show()
             self.show_site_rules()
+        if self.control_signals.poll_update():
+            self.show()
+            self.check_for_updates()
         self.control_after_id = self.root.after(250, self._poll_control_signals)
+
+    def _automatic_update_check(self) -> None:
+        self.auto_update_after_id = None
+        if automatic_check_due():
+            self.check_for_updates(silent=True)
+
+    def check_for_updates(self, silent: bool = False) -> None:
+        if self.update_checking or self.update_downloading:
+            if not silent:
+                messagebox.showinfo("正在更新", "更新检查或下载正在进行，请稍候。")
+            return
+        self.update_checking = True
+        self.update_button.configure(state="disabled")
+        self.update_button_text.set("正在检查…")
+        threading.Thread(
+            target=self._check_update_worker,
+            args=(silent,),
+            daemon=True,
+        ).start()
+        self._ensure_update_poll()
+
+    def _check_update_worker(self, silent: bool) -> None:
+        try:
+            update = check_for_update()
+            record_successful_check()
+            self.update_events.put(("check_ok", (silent, update)))
+        except Exception as exc:
+            self.update_events.put(("check_error", (silent, exc)))
+
+    def _ensure_update_poll(self) -> None:
+        if self.update_poll_after_id is None:
+            self.update_poll_after_id = self.root.after(150, self._poll_update_events)
+
+    def _poll_update_events(self) -> None:
+        self.update_poll_after_id = None
+        while True:
+            try:
+                event, payload = self.update_events.get_nowait()
+            except Empty:
+                break
+            if event == "check_ok":
+                silent, update = payload
+                self._handle_update_check(bool(silent), update)
+            elif event == "check_error":
+                silent, error = payload
+                self._handle_update_error(bool(silent), error)
+            elif event == "download_progress":
+                downloaded, total = payload
+                percent = min(99, int(int(downloaded) * 100 / max(1, int(total))))
+                self.update_button_text.set(f"正在下载 {percent}%")
+            elif event == "download_ok":
+                self._handle_download_ready(payload)
+            elif event == "download_error":
+                self._handle_download_error(payload)
+        if self.update_checking or self.update_downloading:
+            self._ensure_update_poll()
+
+    def _reset_update_button(self) -> None:
+        self.update_button_text.set("检查更新")
+        self.update_button.configure(state="normal")
+
+    def _handle_update_check(self, silent: bool, update: object) -> None:
+        self.update_checking = False
+        self._reset_update_button()
+        if update is None:
+            if not silent:
+                messagebox.showinfo("已经是最新版", f"当前版本 v{APP_VERSION} 已是最新版。")
+            return
+        if not isinstance(update, UpdateInfo):
+            self._handle_update_error(silent, UpdateError("更新信息无效"))
+            return
+        if not self.visible:
+            self.show()
+        details = f"发现新版本 v{update.version}，是否现在一键更新？"
+        if update.notes:
+            details += "\n\n" + update.notes[:1200]
+        if not messagebox.askyesno("发现新版本", details, parent=self.root):
+            return
+        self._start_update_download(update)
+
+    def _handle_update_error(self, silent: bool, error: object) -> None:
+        self.update_checking = False
+        self._reset_update_button()
+        if not silent:
+            messagebox.showwarning("检查更新失败", str(error), parent=self.root)
+
+    def _start_update_download(self, update: UpdateInfo) -> None:
+        self.update_downloading = True
+        self.update_button.configure(state="disabled")
+        self.update_button_text.set("正在下载 0%")
+        threading.Thread(
+            target=self._download_update_worker,
+            args=(update,),
+            daemon=True,
+        ).start()
+        self._ensure_update_poll()
+
+    def _download_update_worker(self, update: UpdateInfo) -> None:
+        try:
+            installer = prepare_update(
+                update,
+                lambda current, total: self.update_events.put(
+                    ("download_progress", (current, total))
+                ),
+            )
+            self.update_events.put(("download_ok", installer))
+        except Exception as exc:
+            self.update_events.put(("download_error", exc))
+
+    def _handle_download_ready(self, installer: object) -> None:
+        self.update_downloading = False
+        self.update_button_text.set("正在安装…")
+        try:
+            launch_installer(Path(installer))
+        except Exception as exc:
+            self._handle_download_error(exc)
+            return
+        self.root.after(350, self.quit)
+
+    def _handle_download_error(self, error: object) -> None:
+        self.update_downloading = False
+        self._reset_update_button()
+        messagebox.showerror("更新失败", str(error), parent=self.root)
 
     def refresh(self, force: bool = False) -> None:
         if self.refresh_after_id:
@@ -570,6 +720,12 @@ class MainWindow:
         if self.control_after_id:
             self.root.after_cancel(self.control_after_id)
             self.control_after_id = None
+        if self.update_poll_after_id:
+            self.root.after_cancel(self.update_poll_after_id)
+            self.update_poll_after_id = None
+        if self.auto_update_after_id:
+            self.root.after_cancel(self.auto_update_after_id)
+            self.auto_update_after_id = None
         if self.control_signals:
             self.control_signals.close()
             self.control_signals = None

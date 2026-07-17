@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "下载中转站",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "记录 IDM 视频下载所在网页，并自动中转导入本机 Eagle。",
   "icons": {
     "16": "icons/icon-16.png",

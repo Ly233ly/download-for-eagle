@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -15,12 +16,12 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("下载中转站一键安装程序")]
 [assembly: AssemblyProduct("下载中转站")]
 [assembly: AssemblyCompany("下载中转站")]
-[assembly: AssemblyVersion("0.5.0.0")]
-[assembly: AssemblyFileVersion("0.5.0.0")]
+[assembly: AssemblyVersion("0.6.0.0")]
+[assembly: AssemblyFileVersion("0.6.0.0")]
 
 internal static class SetupProgram
 {
-    internal const string Version = "0.5.0";
+    internal const string Version = "0.6.0";
     internal const string ProductName = "下载中转站";
     internal const string QuitEventName = @"Local\IdmEagleAutoImportQuit";
     internal const string DefaultIdmRegistry = @"Software\DownloadManager";
@@ -41,6 +42,18 @@ internal static class SetupProgram
         {
             return RunTestUninstall();
         }
+        if (args.Any(value => value == "--test-update"))
+        {
+            return RunTestUpdate();
+        }
+        if (args.Any(value => value == "--update"))
+        {
+            return RunUpdate();
+        }
+        if (args.Any(value => value == "--install-silent"))
+        {
+            return RunSilentInstall();
+        }
         int workerIndex = Array.IndexOf(args, "--uninstall-worker");
         if (workerIndex >= 0 && workerIndex + 1 < args.Length)
         {
@@ -58,6 +71,44 @@ internal static class SetupProgram
 
         Application.Run(new InstallerForm());
         return 0;
+    }
+
+    private static int RunUpdate()
+    {
+        try
+        {
+            InstallerEngine.Install(false, delegate { }, true);
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                exception.Message,
+                "下载中转站更新",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error
+            );
+            return 1;
+        }
+    }
+
+    private static int RunSilentInstall()
+    {
+        try
+        {
+            InstallerEngine.Install(false, delegate { }, false, false);
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                "安装失败：" + exception.Message,
+                "下载中转站",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error
+            );
+            return 1;
+        }
     }
 
     private static int RunTestInstall()
@@ -88,6 +139,24 @@ internal static class SetupProgram
         try
         {
             InstallerEngine.Uninstall(InstallerEngine.GetInstallDirectory(true), true);
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            string resultPath = Environment.GetEnvironmentVariable("IDM_EAGLE_TEST_RESULT") ?? "";
+            if (!string.IsNullOrWhiteSpace(resultPath))
+            {
+                File.WriteAllText(resultPath, exception.ToString(), new UTF8Encoding(false));
+            }
+            return 1;
+        }
+    }
+
+    private static int RunTestUpdate()
+    {
+        try
+        {
+            InstallerEngine.Install(true, delegate { }, true);
             return 0;
         }
         catch (Exception exception)
@@ -322,7 +391,12 @@ internal static class InstallerEngine
         );
     }
 
-    internal static InstallResult Install(bool testMode, Action<string> report)
+    internal static InstallResult Install(
+        bool testMode,
+        Action<string> report,
+        bool updateMode = false,
+        bool openChromeSetup = true
+    )
     {
         string payload = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app");
         if (!File.Exists(Path.Combine(payload, "下载中转站.exe"))
@@ -332,46 +406,217 @@ internal static class InstallerEngine
         }
 
         string installDirectory = GetInstallDirectory(testMode);
+        string backupDirectory = installDirectory + ".update-backup";
         report("正在停止旧版本…");
         SignalQuit();
-        Thread.Sleep(testMode ? 50 : 1000);
+        Thread.Sleep(testMode ? 50 : (updateMode ? 2500 : 1000));
 
-        report("正在复制程序文件…");
-        Directory.CreateDirectory(installDirectory);
-        CopyDirectory(payload, installDirectory);
-
-        report("正在准备 Chrome 自动配对…");
-        string extensionDirectory = Path.Combine(installDirectory, "chrome-extension");
-        WriteBootstrapPairing(extensionDirectory, testMode);
-
-        report("正在配置 IDM…");
-        string warning;
-        bool configured = ConfigureIdm(installDirectory, testMode, out warning);
-
-        if (!testMode)
+        if (updateMode)
         {
-            report("正在创建快捷方式…");
-            InstallUninstaller(installDirectory);
-            CreateShortcuts(installDirectory);
-            RegisterUninstaller(installDirectory);
-
-            report("正在启动助手…");
-            Process.Start(new ProcessStartInfo
+            if (!Directory.Exists(installDirectory))
             {
-                FileName = Path.Combine(installDirectory, "下载中转站.exe"),
-                WorkingDirectory = installDirectory,
-                UseShellExecute = true
-            });
-            OpenChromeSetup(extensionDirectory);
+                throw new InvalidOperationException("没有找到已安装的旧版本，请改用一键安装。 ");
+            }
+            TryDeleteDirectory(backupDirectory);
+            MoveDirectoryWithRetries(installDirectory, backupDirectory);
         }
 
-        return new InstallResult
+        try
         {
-            InstallDirectory = installDirectory,
-            ExtensionDirectory = extensionDirectory,
-            IdmConfigured = configured,
-            Warning = warning
-        };
+            report("正在复制程序文件…");
+            Directory.CreateDirectory(installDirectory);
+            CopyDirectory(payload, installDirectory);
+
+            report("正在准备 Chrome 配对…");
+            string extensionDirectory = Path.Combine(installDirectory, "chrome-extension");
+            if (updateMode)
+            {
+                string previousBootstrap = Path.Combine(
+                    backupDirectory,
+                    "chrome-extension",
+                    "bootstrap.js"
+                );
+                if (File.Exists(previousBootstrap))
+                {
+                    File.Copy(previousBootstrap, Path.Combine(extensionDirectory, "bootstrap.js"), true);
+                }
+            }
+            else
+            {
+                WriteBootstrapPairing(extensionDirectory, testMode);
+            }
+
+            report("正在配置 IDM…");
+            string warning;
+            bool configured = ConfigureIdm(installDirectory, testMode, out warning);
+            if (updateMode && testMode)
+            {
+                if (string.Equals(
+                    Environment.GetEnvironmentVariable("IDM_EAGLE_TEST_UPDATE_FAIL"),
+                    "1",
+                    StringComparison.Ordinal
+                ))
+                {
+                    throw new InvalidOperationException("模拟更新失败");
+                }
+                TryDeleteDirectory(backupDirectory);
+            }
+
+            if (!testMode && !updateMode)
+            {
+                report("正在创建快捷方式…");
+                InstallUninstaller(installDirectory);
+                CreateShortcuts(installDirectory);
+                RegisterUninstaller(installDirectory);
+            }
+
+            if (!testMode)
+            {
+                report("正在启动助手…");
+                StartAssistant(installDirectory);
+                if (updateMode)
+                {
+                    report("正在确认新版本…");
+                    if (!WaitForHealthyVersion(SetupProgram.Version, TimeSpan.FromSeconds(20)))
+                    {
+                        throw new InvalidOperationException("新版本启动检查未通过");
+                    }
+                    InstallUninstaller(installDirectory);
+                    CreateShortcuts(installDirectory);
+                    RegisterUninstaller(installDirectory);
+                    TryDeleteDirectory(backupDirectory);
+                }
+                else if (openChromeSetup)
+                {
+                    OpenChromeSetup(extensionDirectory);
+                }
+            }
+
+            return new InstallResult
+            {
+                InstallDirectory = installDirectory,
+                ExtensionDirectory = extensionDirectory,
+                IdmConfigured = configured,
+                Warning = warning
+            };
+        }
+        catch (Exception exception)
+        {
+            if (!updateMode)
+            {
+                throw;
+            }
+            RollBackUpdate(installDirectory, backupDirectory, testMode);
+            throw new InvalidOperationException(
+                "更新没有完成，已自动恢复旧版本。\r\n\r\n" + exception.Message,
+                exception
+            );
+        }
+    }
+
+    private static void StartAssistant(string installDirectory)
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = Path.Combine(installDirectory, "下载中转站.exe"),
+            WorkingDirectory = installDirectory,
+            UseShellExecute = true
+        });
+    }
+
+    private static bool WaitForHealthyVersion(string version, TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow.Add(timeout);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(
+                    "http://127.0.0.1:47652/health"
+                );
+                request.Timeout = 1000;
+                request.ReadWriteTimeout = 1000;
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                using (StreamReader reader = new StreamReader(response.GetResponseStream()))
+                {
+                    string body = reader.ReadToEnd();
+                    if (body.Contains("\"version\": \"" + version + "\"")
+                        || body.Contains("\"version\":\"" + version + "\""))
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch (WebException)
+            {
+            }
+            Thread.Sleep(500);
+        }
+        return false;
+    }
+
+    private static void RollBackUpdate(
+        string installDirectory,
+        string backupDirectory,
+        bool testMode
+    )
+    {
+        SignalQuit();
+        Thread.Sleep(1500);
+        TryDeleteDirectory(installDirectory);
+        if (Directory.Exists(backupDirectory))
+        {
+            MoveDirectoryWithRetries(backupDirectory, installDirectory);
+            if (!testMode)
+            {
+                StartAssistant(installDirectory);
+            }
+        }
+    }
+
+    private static void MoveDirectoryWithRetries(string source, string destination)
+    {
+        Exception lastError = null;
+        for (int attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                Directory.Move(source, destination);
+                return;
+            }
+            catch (IOException exception)
+            {
+                lastError = exception;
+                Thread.Sleep(250);
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                lastError = exception;
+                Thread.Sleep(250);
+            }
+        }
+        throw lastError ?? new IOException("无法移动程序目录");
+    }
+
+    private static void TryDeleteDirectory(string directory)
+    {
+        if (!Directory.Exists(directory)) return;
+        for (int attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                Directory.Delete(directory, true);
+                return;
+            }
+            catch (IOException)
+            {
+                Thread.Sleep(250);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                Thread.Sleep(250);
+            }
+        }
     }
 
     private static void SignalQuit()

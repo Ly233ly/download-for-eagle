@@ -2,6 +2,7 @@ importScripts("bootstrap.js");
 
 const API_BASE = "http://127.0.0.1:47652";
 const RETRY_ALARM = "retry-source-events";
+const VERSION_ALARM = "check-backend-version";
 const BOOTSTRAP_SECRET = String(globalThis.IDM_EAGLE_BOOTSTRAP_SECRET || "");
 let flushPromise = null;
 let fastRetryScheduled = false;
@@ -133,6 +134,38 @@ function scheduleRetries() {
   }, 5000);
 }
 
+function versionParts(value) {
+  return String(value || "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+}
+
+function isNewerVersion(candidate, current) {
+  const left = versionParts(candidate);
+  const right = versionParts(current);
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (left[index] || 0) - (right[index] || 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return false;
+}
+
+async function reloadForBackendUpdate() {
+  try {
+    const response = await fetch(`${API_BASE}/health`);
+    const health = await response.json();
+    const extensionVersion = chrome.runtime.getManifest().version;
+    if (response.ok && isNewerVersion(health.version, extensionVersion)) {
+      chrome.runtime.reload();
+    }
+  } catch (_error) {
+    // 助手未运行时保持安静，下次低频检查再确认。
+  }
+}
+
+function scheduleVersionCheck() {
+  chrome.alarms.create(VERSION_ALARM, { periodInMinutes: 30 });
+}
+
 async function resolveDeferredSiteCheck(event) {
   if (!event.deferSiteCheck) return event;
   const domain = new URL(event.pageUrl).hostname;
@@ -237,10 +270,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === RETRY_ALARM) flushEvents();
+  if (alarm.name === VERSION_ALARM) reloadForBackendUpdate();
 });
 
-chrome.runtime.onStartup.addListener(() => tryAutoPair().then(flushEvents));
-chrome.runtime.onInstalled.addListener(() => tryAutoPair().then(flushEvents));
+chrome.runtime.onStartup.addListener(() => {
+  scheduleVersionCheck();
+  reloadForBackendUpdate();
+  tryAutoPair().then(flushEvents);
+});
+chrome.runtime.onInstalled.addListener(() => {
+  scheduleVersionCheck();
+  reloadForBackendUpdate();
+  tryAutoPair().then(flushEvents);
+});
+scheduleVersionCheck();
+reloadForBackendUpdate();
 
 const recentVideoRequests = new Map();
 const VIDEO_REQUEST = /\.(mp4|mov|mkv|webm|avi|m4v|mpeg|mpg|ts|m2ts|wmv)(?:$|[?#])/i;

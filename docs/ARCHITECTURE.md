@@ -60,6 +60,13 @@ IDM 下载完成：最终路径 ──┴─> SQLite 持久任务
 - PyInstaller `onedir` 后端包含 Python 3.14、SQLite、Tk 和 Tcl/Tk；IDM 的 C# 接收器仍保持轻量，只启动冻结后端的 `--receive` 模式。
 - 网站开关主要控制来源保存与明确跳过。由于 IDM 不提供网页地址，浏览器未识别到的无来源下载无法可靠判断网站，按直接导入处理。
 
+### 一键更新
+
+- 桌面助手每天最多访问一次 GitHub Release 的 `update.json`，也可由主界面或托盘菜单手动触发。
+- 客户端先使用内置 RSA 公钥验证规范化清单，再限制下载地址必须属于本仓库，并核对 ZIP 的大小与 SHA-256。
+- 安装器停止旧进程后把旧程序目录改名为临时备份；新后台必须在 20 秒内通过 `127.0.0.1:47652/health` 版本检查，失败则恢复并重启旧版。
+- Chrome 扩展每 30 分钟低频比较自身与后台版本，仅在后台版本更高时调用 `chrome.runtime.reload()`。
+
 ## 数据与状态
 
 - 开发便携模式数据库位于 `data\bridge.db`；安装版位于 `%LOCALAPPDATA%\IdmEagleAutoImport\bridge.db`。
