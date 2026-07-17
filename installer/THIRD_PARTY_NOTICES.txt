@@ -1,0 +1,18 @@
+Third-party components included in the standalone runtime
+=========================================================
+
+Python 3.14.4
+Copyright (c) Python Software Foundation.
+Distributed under the Python Software Foundation License Version 2.
+See licenses/PYTHON-LICENSE.txt in the release package.
+
+PyInstaller 6.21.0 bootloader
+Copyright (c) PyInstaller Development Team.
+Distributed under GPL-2.0-or-later with the special exception described in
+the bundled license.
+See licenses/PYINSTALLER-COPYING.txt in the release package.
+
+Tcl/Tk 8.6
+The runtime contains Tcl/Tk components required by the desktop interface.
+The upstream license text is included inside the runtime at
+_internal/_tk_data/license.terms.

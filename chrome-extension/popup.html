@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>下载中转站</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <h1>下载中转站 <small>v0.5.0</small></h1>
+    <p id="site" class="site">正在读取当前网站…</p>
+
+    <section id="pairing" hidden>
+      <p>首次使用，请输入托盘助手显示的六位配对码。</p>
+      <div class="row">
+        <input id="code" inputmode="numeric" maxlength="6" placeholder="六位配对码">
+        <button id="pair">配对</button>
+      </div>
+    </section>
+
+    <section id="controls" hidden>
+      <label class="toggle-row">
+        <span>本网站自动导入</span>
+        <input id="enabled" type="checkbox">
+      </label>
+      <p class="notice">来源网页是可选信息：没有记录到来源，视频也会直接导入 Eagle。</p>
+      <button id="manual" class="secondary">为下一次下载记录当前网页（可选）</button>
+      <button id="ignore" class="secondary danger">本次下载不导入</button>
+      <p class="hint">关闭本网站自动导入后，扩展识别到该网站的下载动作时会通知助手跳过。</p>
+    </section>
+
+    <p id="status" role="status"></p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

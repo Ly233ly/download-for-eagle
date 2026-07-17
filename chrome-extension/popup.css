@@ -1,0 +1,105 @@
+:root {
+  color-scheme: light;
+  font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  color: #1f2937;
+  background: #f8fafc;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+main {
+  padding: 18px;
+}
+
+h1 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+h1 small {
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+}
+
+.site {
+  margin: 0 0 16px;
+  color: #475569;
+  word-break: break-all;
+}
+
+.row,
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggle-row {
+  justify-content: space-between;
+  padding: 12px 0;
+  font-weight: 600;
+}
+
+input[type="text"],
+input:not([type]) {
+  flex: 1;
+}
+
+#code {
+  width: 150px;
+  padding: 9px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  font-size: 15px;
+}
+
+button {
+  border: 0;
+  border-radius: 7px;
+  padding: 10px 14px;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+}
+
+button.secondary {
+  width: 100%;
+  margin-top: 8px;
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+button.danger {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.hint,
+#status {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.notice {
+  margin: 4px 0 8px;
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+#status.error {
+  color: #b91c1c;
+}
+
+#status.success {
+  color: #047857;
+}

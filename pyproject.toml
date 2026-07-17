@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "idm-eagle-auto-import"
+version = "0.5.0"
+description = "Automatically import videos downloaded by IDM into Eagle with their source page URL."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+idm-eagle = "idm_eagle_bridge.main:main"
+idm-eagle-hook = "idm_eagle_bridge.hook:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
