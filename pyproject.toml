@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "idm-eagle-auto-import"
-version = "0.6.0"
+version = "1.2.3"
 description = "Automatically import videos downloaded by IDM into Eagle with their source page URL."
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = []
 

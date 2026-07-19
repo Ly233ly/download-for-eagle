@@ -1,32 +1,100 @@
 {
-  "manifest_version": 3,
-  "name": "下载中转站",
-  "version": "0.6.0",
-  "description": "记录 IDM 视频下载所在网页，并自动中转导入本机 Eagle。",
+  "background": {
+    "service_worker": "js/background.js"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_title": "下载中转站",
+    "default_popup": "popup.html"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "description": "发现网页媒体并提交给本机软件下载、合并和导入 Eagle。",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-  "permissions": ["alarms", "storage", "tabs", "webRequest"],
-  "host_permissions": ["http://127.0.0.1:47652/*", "http://*/*", "https://*/*"],
-  "background": {
-    "service_worker": "background.js"
+  "manifest_version": 3,
+  "minimum_chrome_version": "93",
+  "name": "下载中转站",
+  "homepage_url": "https://github.com/Ly233ly/download-for-eagle",
+  "permissions": [
+    "tabs",
+    "webRequest",
+    "storage",
+    "webNavigation",
+    "alarms",
+    "scripting",
+    "sidePanel"
+  ],
+  "commands": {
+    "_execute_action": {}
   },
-  "action": {
-    "default_title": "下载中转站",
-    "default_icon": {
-      "16": "icons/icon-16.png",
-      "32": "icons/icon-32.png"
-    },
-    "default_popup": "popup.html"
-  },
+  "host_permissions": [
+    "*://*/*",
+    "<all_urls>"
+  ],
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
-      "run_at": "document_start"
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ],
+      "js": [
+        "js/eagle-bridge-candidate-logic.js",
+        "js/content-script.js",
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://*.bilibili.com/*"
+      ],
+      "js": [
+        "js/bilibili-content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://*.youtube.com/*"
+      ],
+      "js": [
+        "js/youtube-content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
     }
-  ]
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "catch-script/bilibili.js"
+      ],
+      "matches": [
+        "https://*.bilibili.com/*"
+      ]
+    },
+    {
+      "resources": [
+        "catch-script/youtube.js"
+      ],
+      "matches": [
+        "https://*.youtube.com/*"
+      ]
+    }
+  ],
+  "version": "1.2.3",
+  "incognito": "split"
 }

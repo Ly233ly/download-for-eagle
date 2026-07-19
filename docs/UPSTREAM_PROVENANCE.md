@@ -1,0 +1,37 @@
+# 上游来源与许可记录
+
+## cat-catch
+
+- 项目：`xifangczy/cat-catch`
+- 上游版本：`2.7.1`
+- 固定提交：`7a77612b3e2a01cedacae6e43eb88a89eee3034f`
+- 获取地址：<https://github.com/xifangczy/cat-catch/tree/7a77612b3e2a01cedacae6e43eb88a89eee3034f>
+- 上游许可证：GNU General Public License v3.0
+- 导入日期：2026-07-18
+- 历史导入范围：浏览器扩展的资源捕获、深度搜索、HLS/DASH、预览、下载、录制、外部路由、媒体控制、设置、国际化及相关第三方浏览器库。
+
+上游完整固定源码快照（排除 `.git` 对象库）、原始说明、变更记录与许可证保存在 `third_party/cat-catch/source/`，其内容对应上述提交。组合发行物采用 GPL-3.0；项目原有 MIT 代码的版权与许可文本继续保存在 `licenses/PROJECT-MIT-LICENSE.txt`，不得移除。
+
+## 修改说明
+
+下载中转站在上游扩展基础上增加：
+
+- 下载前默认可见的内容级媒体候选与 Eagle 状态；
+- 现有本机配对、网站规则与来源事件兼容层；
+- 扩展只负责发现、归组、预览和提交，全部普通直链、分轨与清单统一由本机软件下载；
+- 本机 FFmpeg/ffprobe 下载、合并、输出验证、持久计划、预览生成与可选 Eagle 导入；
+- 所选字幕进入方案后作为最终 sidecar 保留，不被误送入音视频 mux 或清理；
+- B 站新版内联 playinfo 与 OG 标题/封面回退；
+- 通用 frame 真实视频帧、跨域播放器矩形裁剪、首次缓存快照门和统一内容组角标；
+- 1.2.0 将增强捕获重写为下载中转站自己的精简脚本；删除上游 popup、下载/解析/预览页、录制/WebRTC/屏幕脚本、移动 UA、密钥面板、在线 FFmpeg、外部路由、完整设置页、国际化、上游图标和浏览器库；
+- 删除旧 Chrome 组件交接、DNR 请求头规则、自动下载快捷键/右键项/后台状态、捕获后自动外发、浏览器 FFmpeg 和外部下载目标；预览、直链与清单页最终改交本机计划；
+- DRM 阻断、敏感字段最小化、临时文件归属和签名升级/回滚约束；
+- 下载中转站名称、图标、版本和安装器集成。
+
+1.2.3 活动扩展仍包含从历史 GPL 工作继续修改的后台网络捕获与内容适配文件，因此不能撤销 GPL 义务或删除本记录。新增 YouTube 主世界格式适配器与通用内容页解析桥由本项目独立实现，不复制站点或 IDM 代码，也不改变既有许可义务。`third_party/cat-catch/source/` 是对应源码/审计归档，不会由浏览器清单加载；当前运行时文件清单由 `manifest.json`、`popup.html` 和安装器清理门禁共同限定。
+
+## YouTube 桌面解析工具
+
+1.2.3 固定使用 yt-dlp 2026.06.09 Windows x64 官方发行可执行文件与 Deno 2.8.1 Windows x64 官方运行时；同一受控运行时同时承担 YouTube 准确画质和通用内容页解析，不增加逐站二进制下载器。下载地址、压缩包/二进制 SHA-256 和复现脚本记录在 `packaging/Fetch-YouTube-Resolver.ps1` 与 `media-tools/YOUTUBE-RESOLVER-VERSION.json`。yt-dlp 对应源代码发行包固定归档在 `third_party/yt-dlp/yt-dlp-2026.06.09-source.tar.gz`；Unlicense、yt-dlp 可执行文件的第三方许可总表和 Deno MIT 许可证随发行物提供。
+
+任何继续同步上游的提交都必须在本文件追加固定提交、日期和冲突处理说明。

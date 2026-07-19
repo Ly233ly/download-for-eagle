@@ -12,7 +12,13 @@ from .database import Database
 from .paths import bootstrap_pairing_path
 
 
-CHROME_EXTENSION_ORIGIN = re.compile(r"^chrome-extension://[a-p]{32}$")
+BROWSER_EXTENSION_ORIGIN = re.compile(
+    r"^(?:chrome-extension://[a-p]{32}|moz-extension://[0-9a-f]{8}-[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+    re.IGNORECASE,
+)
+# Kept as a source-compatible alias for the 0.6 API server and tests.
+CHROME_EXTENSION_ORIGIN = BROWSER_EXTENSION_ORIGIN
 
 
 class PairingError(ValueError):
@@ -45,7 +51,7 @@ class PairingManager:
 
     def pair(self, origin: str, code: str) -> str:
         if not CHROME_EXTENSION_ORIGIN.fullmatch(origin):
-            raise PairingError("只允许 Chrome 扩展进行配对")
+            raise PairingError("只允许 Chrome、Edge 或 Firefox 扩展进行配对")
         if not hmac.compare_digest(str(code), self.pairing_code):
             raise PairingError("配对码不正确")
 
@@ -53,7 +59,7 @@ class PairingManager:
 
     def pair_with_bootstrap(self, origin: str, secret: str) -> str:
         if not CHROME_EXTENSION_ORIGIN.fullmatch(origin):
-            raise PairingError("只允许 Chrome 扩展进行配对")
+            raise PairingError("只允许 Chrome、Edge 或 Firefox 扩展进行配对")
         try:
             payload = json.loads(self.bootstrap_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):

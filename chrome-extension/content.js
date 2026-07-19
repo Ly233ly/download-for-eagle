@@ -27,11 +27,13 @@ document.addEventListener("pointerdown", (event) => {
   if (now - lastCaptureAt < 1500) return;
   lastCaptureAt = now;
   chrome.runtime.sendMessage({
-    type: "sourceEvent",
-    pageUrl: location.href,
-    pageTitle: document.title,
-    mediaUrl: action.mediaUrl,
-    eventType: "page_download_click",
-    capturedAt: now
+    eagleBridge: "sourceClick",
+    event: {
+      pageUrl: location.href,
+      pageTitle: document.title,
+      mediaUrl: action.mediaUrl,
+      eventType: "page_download_click",
+      capturedAt: now
+    }
   }).catch(() => {});
 }, true);

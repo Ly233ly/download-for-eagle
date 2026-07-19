@@ -55,7 +55,10 @@ class EagleClient:
         return result
 
     def app_info(self) -> dict[str, Any]:
-        result = self._request("GET", "/api/v2/app/info")
+        try:
+            result = self._request("GET", "/api/v2/app/info")
+        except EagleEndpointUnavailable:
+            result = self._request("GET", "/api/application/info")
         if result.get("status") not in {"success", True}:
             raise EagleUnavailable("Eagle 本地接口未就绪")
         return result.get("data") or {}

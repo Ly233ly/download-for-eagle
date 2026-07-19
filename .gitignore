@@ -3,11 +3,14 @@ __pycache__/
 .pytest_cache/
 .venv/
 .build-tools/
+.scratch/
+.codegraph/
 .portable
 build/
 dist/
 runtime/
 release/
+installer/*-Windows-x64/
 updates/
 secrets/
 private/

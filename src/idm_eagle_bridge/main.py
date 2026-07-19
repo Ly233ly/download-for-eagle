@@ -54,8 +54,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    api_server = LocalApiServer(database)
     processing = ProcessingService(database, args.interval)
+    api_server = LocalApiServer(database, media_ready_callback=processing.wake)
     api_server.start()
     processing.start()
     try:

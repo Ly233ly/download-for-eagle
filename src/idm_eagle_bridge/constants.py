@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 APP_NAME = "下载中转站"
-APP_VERSION = "0.6.0"
+APP_VERSION = "1.2.3"
+EXTENSION_PROTOCOL_VERSION = 1
 DATA_DIR_NAME = "IdmEagleAutoImport"
 DEFAULT_EAGLE_BASE_URL = "http://127.0.0.1:41595"
 DEFAULT_LOCAL_HOST = "127.0.0.1"

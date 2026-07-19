@@ -25,7 +25,38 @@ class LegacyFallbackEagle(RecordingEagle):
         return {"status": "success"}
 
 
+class EagleFourBeforeV2WebApi(EagleClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.requests: list[tuple[str, str, dict | None]] = []
+
+    def _request(self, method: str, path: str, data: dict | None = None) -> dict:
+        self.requests.append((method, path, data))
+        if path == "/api/v2/app/info":
+            raise EagleEndpointUnavailable("V2 Web API requires a newer Eagle 4 build")
+        if path == "/api/application/info":
+            return {
+                "status": "success",
+                "data": {"version": "4.0.0", "buildVersion": "20250917"},
+            }
+        raise AssertionError(f"unexpected endpoint: {path}")
+
+
 class EagleClientTests(unittest.TestCase):
+    def test_health_falls_back_to_eagle_four_legacy_application_endpoint(self) -> None:
+        eagle = EagleFourBeforeV2WebApi()
+        self.assertEqual(eagle.app_info()["version"], "4.0.0")
+        self.assertTrue(eagle.is_available())
+        self.assertEqual(
+            [request[1] for request in eagle.requests],
+            [
+                "/api/v2/app/info",
+                "/api/application/info",
+                "/api/v2/app/info",
+                "/api/application/info",
+            ],
+        )
+
     def test_import_without_source_omits_website_field(self) -> None:
         eagle = RecordingEagle()
         item_id = eagle.add_from_path("C:/Downloads/video.mp4")

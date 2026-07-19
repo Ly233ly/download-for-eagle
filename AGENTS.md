@@ -14,3 +14,24 @@
 - 修改流程后同步 README、ACCEPTANCE、TASKS、STATUS 和相关 docs，完成项不能保留为未来计划。
 - 自动测试入口见 `DEVELOPMENT.md`；提交前运行全部 unittest、扩展 JS 语法检查和清单 JSON 解析。
 - 深入文档：架构见 `docs/ARCHITECTURE.md`，决策边界见 `docs/DECISIONS.md`，安装运维见 `docs/INSTALLATION_AND_ROLLBACK.md`。
+- `cat-catch` 功能对等是已经完成的 1.0.0 历史目标；1.2.0 起活动扩展只保留媒体发现/候选/预览/提交能力，旧下载器、解析页、录制器、在线 FFmpeg 与第三方路由不得重新进入运行时。
+- 浏览器捕获、解析、预览和下载候选统一使用 `媒体候选组` 领域模型；DASH 的视频流和音频流必须属于同一候选组，禁止按两个无关 URL 呈现。
+- 下载前必须默认展示可识别的标题、封面或预览、媒体类型、清晰度、音轨和预计输出；原始 URL 只能作为展开后的技术信息。
+- 音视频合并默认走本机 FFmpeg streamcopy；浏览器内 FFmpeg/WASM 是受 2GB 限制的可选兼容路径，不得把媒体静默上传到第三方服务器。
+- DRM 内容只允许识别并明确提示，不实现、迁移或测试任何 DRM 绕过能力。
+- 可以删除的仅限本程序创建且带任务归属记录的临时分片/中间文件；用户原下载文件仍然禁止移动、删除或修改。
+- 若复用或修改 `cat-catch` GPL-3.0 源码，必须先完成许可门禁，保留版权、许可证、对应源码和构建信息；未通过门禁前只能研究行为和独立实现。
+
+## Agent skills
+
+### Issue tracker
+
+本仓库使用本地 Markdown：`TASKS.md` 保存总览，详细任务位于 `.scratch/<feature>/issues/`。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+本地任务使用 `needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix`。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+本仓库采用单一上下文：领域词汇见根目录 `CONTEXT.md`，架构决策统一见 `docs/DECISIONS.md`。见 `docs/agents/domain.md`。

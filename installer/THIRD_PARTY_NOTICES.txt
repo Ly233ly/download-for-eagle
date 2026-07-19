@@ -1,6 +1,43 @@
 Third-party components included in the standalone runtime
 =========================================================
 
+cat-catch 2.7.1 (commit 7a77612b3e2a01cedacae6e43eb88a89eee3034f)
+Copyright (c) xifangczy and contributors.
+Distributed under GNU General Public License v3.0.
+The upstream source, license and modification record are included under
+third_party/cat-catch and docs/UPSTREAM_PROVENANCE.md.
+
+Browser libraries formerly bundled by cat-catch (mux.js, mpd-parser,
+jquery-qrcode, jQuery, hls.js, MQTT.js, jquery.json-viewer, StreamSaver.js and
+the hls.js AES decryptor) are not part of the 1.2.3 active extension payload.
+Their original notices remain inside the fixed corresponding-source snapshot at
+third_party/cat-catch/source/lib/third-party-libraries.md.
+
+FFmpeg 8.1.2 essentials build for Windows
+Copyright (c) 2000-2026 the FFmpeg developers.
+Distributed under GNU General Public License v3.0.
+Build source: https://www.gyan.dev/ffmpeg/builds/
+Corresponding FFmpeg source: https://github.com/FFmpeg/FFmpeg/commit/38b88335f9
+See licenses/FFMPEG-GPL-3.0.txt, licenses/FFMPEG-BUILD-README.txt and
+media-tools/FFMPEG-VERSION.json in the release package.
+
+yt-dlp 2026.06.09 Windows x64 executable
+yt-dlp is released under the Unlicense; its PyInstaller executable contains
+components under additional licenses and the combined executable is GPLv3+.
+See licenses/YT-DLP-UNLICENSE.txt,
+licenses/YT-DLP-THIRD-PARTY-LICENSES.txt,
+media-tools/YOUTUBE-RESOLVER-VERSION.json and
+third_party/yt-dlp/yt-dlp-2026.06.09-source.tar.gz.
+
+Deno 2.8.1 Windows x64 runtime
+Copyright 2018-2026 the Deno authors.
+Distributed under the MIT License.
+See licenses/DENO-MIT.txt and media-tools/YOUTUBE-RESOLVER-VERSION.json.
+
+The Download Transfer Station 1.2.3 combined work is distributed under
+GNU General Public License v3.0. Original project code from 0.6.0 and earlier
+retains its MIT notice in licenses/PROJECT-MIT-LICENSE.txt.
+
 Python 3.14.4
 Copyright (c) Python Software Foundation.
 Distributed under the Python Software Foundation License Version 2.

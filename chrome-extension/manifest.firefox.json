@@ -1,0 +1,113 @@
+{
+  "background": {
+    "scripts": [
+      "js/polyfill.js",
+      "js/function.js",
+      "js/init.js",
+      "js/eagle-bridge-candidate-logic.js",
+      "js/eagle-bridge-ui-logic.js",
+      "js/eagle-bridge-auth-logic.js",
+      "bootstrap.js",
+      "js/eagle-bridge.js",
+      "js/background.js"
+    ]
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_title": "下载中转站",
+    "default_popup": "popup.html"
+  },
+  "description": "发现网页媒体并提交给本机软件下载、合并和导入 Eagle。",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "manifest_version": 3,
+  "name": "下载中转站",
+  "homepage_url": "https://github.com/Ly233ly/download-for-eagle",
+  "permissions": [
+    "tabs",
+    "webRequest",
+    "storage",
+    "webNavigation",
+    "alarms",
+    "scripting"
+  ],
+  "commands": {
+    "_execute_browser_action": {}
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "download-transfer-station@ly233ly.local",
+      "strict_min_version": "113.0"
+    }
+  },
+  "host_permissions": [
+    "*://*/*",
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ],
+      "js": [
+        "js/eagle-bridge-candidate-logic.js",
+        "js/content-script.js",
+        "content.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.bilibili.com/*"
+      ],
+      "js": [
+        "js/bilibili-content.js"
+      ],
+      "all_frames": false,
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.youtube.com/*"
+      ],
+      "js": [
+        "js/youtube-content.js"
+      ],
+      "all_frames": false,
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "catch-script/bilibili.js"
+      ],
+      "matches": [
+        "https://*.bilibili.com/*"
+      ]
+    },
+    {
+      "resources": [
+        "catch-script/youtube.js"
+      ],
+      "matches": [
+        "https://*.youtube.com/*"
+      ]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "version": "1.2.3"
+}

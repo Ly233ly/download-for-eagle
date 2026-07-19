@@ -16,12 +16,12 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("下载中转站一键安装程序")]
 [assembly: AssemblyProduct("下载中转站")]
 [assembly: AssemblyCompany("下载中转站")]
-[assembly: AssemblyVersion("0.6.0.0")]
-[assembly: AssemblyFileVersion("0.6.0.0")]
+[assembly: AssemblyVersion("1.2.3.0")]
+[assembly: AssemblyFileVersion("1.2.3.0")]
 
 internal static class SetupProgram
 {
-    internal const string Version = "0.6.0";
+    internal const string Version = "1.2.3";
     internal const string ProductName = "下载中转站";
     internal const string QuitEventName = @"Local\IdmEagleAutoImportQuit";
     internal const string DefaultIdmRegistry = @"Software\DownloadManager";
@@ -400,7 +400,12 @@ internal static class InstallerEngine
     {
         string payload = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app");
         if (!File.Exists(Path.Combine(payload, "下载中转站.exe"))
-            || !File.Exists(Path.Combine(payload, "runtime", "下载中转站后台", "下载中转站后台.exe")))
+            || !File.Exists(Path.Combine(payload, "runtime", "下载中转站后台", "下载中转站后台.exe"))
+            || !File.Exists(Path.Combine(payload, "media-tools", "ffmpeg.exe"))
+            || !File.Exists(Path.Combine(payload, "media-tools", "ffprobe.exe"))
+            || !File.Exists(Path.Combine(payload, "media-tools", "yt-dlp.exe"))
+            || !File.Exists(Path.Combine(payload, "media-tools", "deno.exe"))
+            || !File.Exists(Path.Combine(payload, "chrome-extension", "manifest.json")))
         {
             throw new InvalidOperationException("安装包不完整，请重新解压完整 ZIP 后再运行。");
         }
@@ -426,6 +431,7 @@ internal static class InstallerEngine
             report("正在复制程序文件…");
             Directory.CreateDirectory(installDirectory);
             CopyDirectory(payload, installDirectory);
+            DeleteObsoleteOwnedExtensionFiles(installDirectory);
 
             report("正在准备 Chrome 配对…");
             string extensionDirectory = Path.Combine(installDirectory, "chrome-extension");
@@ -459,6 +465,7 @@ internal static class InstallerEngine
                 {
                     throw new InvalidOperationException("模拟更新失败");
                 }
+                WriteBootstrapPairing(extensionDirectory, true);
                 TryDeleteDirectory(backupDirectory);
             }
 
@@ -474,16 +481,17 @@ internal static class InstallerEngine
             {
                 report("正在启动助手…");
                 StartAssistant(installDirectory);
+                report("正在确认后端、数据库与 FFmpeg…");
+                if (!WaitForHealthyVersion(SetupProgram.Version, TimeSpan.FromSeconds(25)))
+                {
+                    throw new InvalidOperationException("新版本后端、数据库或 FFmpeg 健康检查未通过");
+                }
                 if (updateMode)
                 {
-                    report("正在确认新版本…");
-                    if (!WaitForHealthyVersion(SetupProgram.Version, TimeSpan.FromSeconds(20)))
-                    {
-                        throw new InvalidOperationException("新版本启动检查未通过");
-                    }
                     InstallUninstaller(installDirectory);
                     CreateShortcuts(installDirectory);
                     RegisterUninstaller(installDirectory);
+                    WriteBootstrapPairing(extensionDirectory, false);
                     TryDeleteDirectory(backupDirectory);
                 }
                 else if (openChromeSetup)
@@ -524,6 +532,78 @@ internal static class InstallerEngine
         });
     }
 
+    private static void DeleteObsoleteOwnedExtensionFiles(string installDirectory)
+    {
+        string extensionDirectory = Path.GetFullPath(Path.Combine(installDirectory, "chrome-extension"));
+        string extensionPrefix = extensionDirectory.TrimEnd(Path.DirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        string[] obsoleteFiles =
+        {
+            "background.js",
+            "downloader.html",
+            "install.html",
+            "json.html",
+            "m3u8.html",
+            "mpd.html",
+            "options.html",
+            "preview.html",
+            "popup.js",
+            "popup.css",
+            Path.Combine("catch-script", "catch.js"),
+            Path.Combine("catch-script", "i18n.js"),
+            Path.Combine("catch-script", "recorder.js"),
+            Path.Combine("catch-script", "recorder2.js"),
+            Path.Combine("catch-script", "webrtc.js"),
+            Path.Combine("css", "install.css"),
+            Path.Combine("css", "mobile.css"),
+            Path.Combine("css", "options.css"),
+            Path.Combine("css", "popup.css"),
+            Path.Combine("css", "preview.css"),
+            Path.Combine("css", "public.css"),
+            Path.Combine("js", "desktop-parser-route.js"),
+            Path.Combine("js", "downloader.js"),
+            Path.Combine("js", "i18n.js"),
+            Path.Combine("js", "install.js"),
+            Path.Combine("js", "json.js"),
+            Path.Combine("js", "m3u8.downloader.js"),
+            Path.Combine("js", "m3u8.js"),
+            Path.Combine("js", "mpd.js"),
+            Path.Combine("js", "options.js"),
+            Path.Combine("js", "popup.js"),
+            Path.Combine("js", "popup-utils.js"),
+            Path.Combine("js", "preview.js"),
+            Path.Combine("js", "templates.js"),
+            Path.Combine("js", "media-control.js"),
+        };
+
+        foreach (string relativePath in obsoleteFiles)
+        {
+            string target = Path.GetFullPath(Path.Combine(extensionDirectory, relativePath));
+            if (!target.StartsWith(extensionPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("拒绝清理安装目录之外的文件。 ");
+            }
+            if (File.Exists(target))
+            {
+                File.Delete(target);
+            }
+        }
+
+        string[] obsoleteDirectories = { "img", "lib", "tools", "_locales" };
+        foreach (string relativePath in obsoleteDirectories)
+        {
+            string target = Path.GetFullPath(Path.Combine(extensionDirectory, relativePath));
+            if (!target.StartsWith(extensionPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("拒绝清理安装目录之外的目录。 ");
+            }
+            if (Directory.Exists(target))
+            {
+                Directory.Delete(target, true);
+            }
+        }
+    }
+
     private static bool WaitForHealthyVersion(string version, TimeSpan timeout)
     {
         DateTime deadline = DateTime.UtcNow.Add(timeout);
@@ -540,8 +620,19 @@ internal static class InstallerEngine
                 using (StreamReader reader = new StreamReader(response.GetResponseStream()))
                 {
                     string body = reader.ReadToEnd();
-                    if (body.Contains("\"version\": \"" + version + "\"")
-                        || body.Contains("\"version\":\"" + version + "\""))
+                    bool versionMatches = body.Contains("\"version\": \"" + version + "\"")
+                        || body.Contains("\"version\":\"" + version + "\"");
+                    bool mediaReady = body.Contains("\"mediaReady\": true")
+                        || body.Contains("\"mediaReady\":true");
+                    bool youtubeResolverReady = body.Contains("\"youtubeResolverReady\": true")
+                        || body.Contains("\"youtubeResolverReady\":true");
+                    bool databaseReady = body.Contains("\"databaseSchema\": 5")
+                        || body.Contains("\"databaseSchema\":5");
+                    bool protocolReady = body.Contains("\"extensionProtocol\": 1")
+                        || body.Contains("\"extensionProtocol\":1");
+                    bool downloadEngineReady = body.Contains("\"downloadEngine\": \"desktop_ffmpeg\"")
+                        || body.Contains("\"downloadEngine\":\"desktop_ffmpeg\"");
+                    if (versionMatches && mediaReady && youtubeResolverReady && databaseReady && protocolReady && downloadEngineReady)
                     {
                         return true;
                     }

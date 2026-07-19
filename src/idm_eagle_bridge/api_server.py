@@ -5,16 +5,22 @@ import threading
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlsplit
 
-from .constants import APP_VERSION, DEFAULT_LOCAL_HOST, DEFAULT_LOCAL_PORT
+from .constants import (
+    APP_VERSION,
+    DEFAULT_LOCAL_HOST,
+    DEFAULT_LOCAL_PORT,
+    EXTENSION_PROTOCOL_VERSION,
+)
 from .database import Database
+from .media import MediaCoordinator, MediaPlanError
 from .security import CHROME_EXTENSION_ORIGIN, PairingError, PairingManager
 from .url_utils import InvalidPageUrl, normalize_domain
 
 
-MAX_BODY_SIZE = 64 * 1024
+MAX_BODY_SIZE = 256 * 1024
 
 
 class LocalThreadingHTTPServer(ThreadingHTTPServer):
@@ -23,9 +29,14 @@ class LocalThreadingHTTPServer(ThreadingHTTPServer):
 
 
 class LocalApi:
-    def __init__(self, database: Database) -> None:
+    def __init__(
+        self,
+        database: Database,
+        media_ready_callback: Callable[[], None] | None = None,
+    ) -> None:
         self.database = database
         self.pairing = PairingManager(database)
+        self.media = MediaCoordinator(database, ready_callback=media_ready_callback)
 
     def pair(self, origin: str, payload: dict[str, Any]) -> dict[str, Any]:
         token = self.pairing.pair(origin, str(payload.get("code", "")))
@@ -140,9 +151,19 @@ def build_handler(api: LocalApi) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:
             parsed = urlsplit(self.path)
             if parsed.path == "/health":
+                media_health = api.media.health()
                 self._json(
                     HTTPStatus.OK,
-                    {"ok": True, "service": "idm-eagle", "version": APP_VERSION},
+                    {
+                        "ok": True,
+                        "service": "idm-eagle",
+                        "version": APP_VERSION,
+                        "extensionProtocol": EXTENSION_PROTOCOL_VERSION,
+                        "databaseSchema": media_health.get("databaseSchema"),
+                        "downloadEngine": media_health.get("downloadEngine"),
+                        "mediaReady": bool(media_health.get("ok")),
+                        "youtubeResolverReady": bool(media_health.get("youtubeResolver")),
+                    },
                 )
                 return
             if not self._authenticated():
@@ -161,10 +182,35 @@ def build_handler(api: LocalApi) -> type[BaseHTTPRequestHandler]:
                         HTTPStatus.OK,
                         {"ok": True, "data": api.database.list_jobs(limit)},
                     )
+                elif parsed.path == "/api/media/plan":
+                    query = parse_qs(parsed.query)
+                    data = api.media.get_plan(query.get("id", [""])[0])
+                    self._json(HTTPStatus.OK, {"ok": True, "data": data})
+                elif parsed.path == "/api/media/plans":
+                    query = parse_qs(parsed.query)
+                    limit = min(max(int(query.get("limit", ["50"])[0]), 1), 200)
+                    self._json(
+                        HTTPStatus.OK,
+                        {"ok": True, "data": api.media.list_plans(limit)},
+                    )
+                elif parsed.path == "/api/media/preview":
+                    query = parse_qs(parsed.query)
+                    data = api.media.get_plan_preview(query.get("id", [""])[0])
+                    self._json(HTTPStatus.OK, {"ok": True, "data": data})
+                elif parsed.path == "/api/media/health":
+                    self._json(
+                        HTTPStatus.OK,
+                        {"ok": True, "data": api.media.health()},
+                    )
                 else:
                     self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "接口不存在"})
             except (InvalidPageUrl, ValueError) as exc:
                 self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            except MediaPlanError as exc:
+                self._json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": str(exc), "errorCode": exc.code},
+                )
 
         def do_POST(self) -> None:
             parsed = urlsplit(self.path)
@@ -187,6 +233,25 @@ def build_handler(api: LocalApi) -> type[BaseHTTPRequestHandler]:
                     data = api.set_site(payload)
                 elif parsed.path == "/api/source":
                     data = api.add_source(payload)
+                elif parsed.path == "/api/media/health":
+                    data = api.media.health()
+                elif parsed.path == "/api/media/plans":
+                    limit = min(max(int(payload.get("limit", 50)), 1), 200)
+                    data = api.media.list_plans(limit)
+                elif parsed.path == "/api/media/plan/get":
+                    data = api.media.get_plan(str(payload.get("planId", "")))
+                elif parsed.path == "/api/media/preview":
+                    data = api.media.get_plan_preview(str(payload.get("planId", "")))
+                elif parsed.path == "/api/media/plan":
+                    data = api.media.create_plan(payload)
+                elif parsed.path == "/api/media/retry":
+                    data = api.media.retry_plan(str(payload.get("planId", "")))
+                elif parsed.path == "/api/media/stop":
+                    data = api.media.stop_plan(str(payload.get("planId", "")))
+                elif parsed.path == "/api/media/open":
+                    data = api.media.open_plan_output(str(payload.get("planId", "")))
+                elif parsed.path == "/api/media/import":
+                    data = api.media.import_completed_plan(str(payload.get("planId", "")))
                 else:
                     self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "接口不存在"})
                     return
@@ -197,6 +262,11 @@ def build_handler(api: LocalApi) -> type[BaseHTTPRequestHandler]:
                 self._json(HTTPStatus.FORBIDDEN, {"ok": False, "error": str(exc)})
             except (InvalidPageUrl, ValueError) as exc:
                 self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            except MediaPlanError as exc:
+                self._json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": str(exc), "errorCode": exc.code},
+                )
             except Exception:
                 self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "本机助手处理失败"})
 
@@ -209,8 +279,9 @@ class LocalApiServer:
         database: Database,
         host: str = DEFAULT_LOCAL_HOST,
         port: int = DEFAULT_LOCAL_PORT,
+        media_ready_callback: Callable[[], None] | None = None,
     ) -> None:
-        self.api = LocalApi(database)
+        self.api = LocalApi(database, media_ready_callback=media_ready_callback)
         self.server = LocalThreadingHTTPServer((host, port), build_handler(self.api))
         self.thread: threading.Thread | None = None
 
@@ -234,3 +305,4 @@ class LocalApiServer:
         self.server.server_close()
         if self.thread:
             self.thread.join(timeout=3)
+        self.api.media.close()

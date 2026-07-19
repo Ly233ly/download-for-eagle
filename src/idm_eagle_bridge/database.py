@@ -74,6 +74,83 @@ ON jobs(status, next_retry_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_file_status
 ON jobs(file_path, status, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS capture_sessions (
+    id TEXT PRIMARY KEY,
+    tab_id INTEGER,
+    page_url TEXT NOT NULL DEFAULT '',
+    page_title TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS media_groups (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    group_key TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    page_url TEXT NOT NULL DEFAULT '',
+    thumbnail_url TEXT NOT NULL DEFAULT '',
+    media_kind TEXT NOT NULL DEFAULT 'direct',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    FOREIGN KEY(session_id) REFERENCES capture_sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_groups_session
+ON media_groups(session_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS media_streams (
+    id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL,
+    client_index INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    source_url_redacted TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '',
+    extension TEXT NOT NULL DEFAULT '',
+    mime_type TEXT NOT NULL DEFAULT '',
+    size INTEGER,
+    width INTEGER,
+    height INTEGER,
+    codec TEXT NOT NULL DEFAULT '',
+    duration REAL,
+    language TEXT NOT NULL DEFAULT '',
+    label TEXT NOT NULL DEFAULT '',
+    drm INTEGER NOT NULL DEFAULT 0 CHECK (drm IN (0, 1)),
+    created_at REAL NOT NULL,
+    FOREIGN KEY(group_id) REFERENCES media_groups(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_streams_group
+ON media_streams(group_id, client_index);
+
+CREATE TABLE IF NOT EXISTS download_plans (
+    id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL,
+    output_name TEXT NOT NULL,
+    output_container TEXT NOT NULL,
+    merge_mode TEXT NOT NULL,
+    route TEXT NOT NULL,
+    import_to_eagle INTEGER NOT NULL DEFAULT 1 CHECK (import_to_eagle IN (0, 1)),
+    status TEXT NOT NULL,
+    progress REAL NOT NULL DEFAULT 0,
+    downloaded_bytes INTEGER NOT NULL DEFAULT 0,
+    total_bytes INTEGER,
+    phase_detail TEXT NOT NULL DEFAULT '',
+    final_path TEXT,
+    preview_path TEXT,
+    job_id TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    completed_at REAL,
+    FOREIGN KEY(group_id) REFERENCES media_groups(id),
+    FOREIGN KEY(job_id) REFERENCES jobs(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_download_plans_status
+ON download_plans(status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS imported_fingerprints (
     fingerprint TEXT PRIMARY KEY,
     job_id TEXT NOT NULL,
@@ -162,6 +239,49 @@ class Database:
                     (now, now),
                 )
                 connection.execute("PRAGMA user_version = 3")
+            if schema_version < 4:
+                # 1.0.0 引入可见媒体候选、下载方案和带归属的组件文件。
+                # 表由上面的幂等 SCHEMA 创建；旧任务与配对数据保持原样。
+                connection.execute("PRAGMA user_version = 4")
+            if schema_version < 5:
+                # 1.1.0 起统一由本机软件下载。旧版浏览器组件回传表不再使用，
+                # 未完成方案因完整签名地址从未落盘，必须回到来源页重新创建。
+                plan_columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(download_plans)")
+                }
+                additions = {
+                    "import_to_eagle": "INTEGER NOT NULL DEFAULT 1",
+                    "downloaded_bytes": "INTEGER NOT NULL DEFAULT 0",
+                    "total_bytes": "INTEGER",
+                    "phase_detail": "TEXT NOT NULL DEFAULT ''",
+                    "preview_path": "TEXT",
+                }
+                for name, declaration in additions.items():
+                    if name not in plan_columns:
+                        connection.execute(
+                            f"ALTER TABLE download_plans ADD COLUMN {name} {declaration}"
+                        )
+                stream_columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(media_streams)")
+                }
+                if "duration" not in stream_columns:
+                    connection.execute("ALTER TABLE media_streams ADD COLUMN duration REAL")
+                connection.execute(
+                    """
+                    UPDATE download_plans SET
+                        route = 'desktop', status = 'retry', progress = 0,
+                        error_code = 'download_context_expired',
+                        error_message = '下载方式已升级，请回到来源网页重新创建任务',
+                        phase_detail = '需要重新创建任务', updated_at = ?
+                    WHERE status IN (
+                        'downloading_components', 'ready_to_merge', 'merging',
+                        'downloading', 'validating'
+                    )
+                    """,
+                    (time.time(),),
+                )
+                connection.execute("DROP TABLE IF EXISTS component_files")
+                connection.execute("PRAGMA user_version = 5")
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         with self.session() as connection:
@@ -544,10 +664,22 @@ class Database:
         updates["updated_at"] = time.time()
         assignments = ", ".join(f"{key} = ?" for key in updates)
         values = list(updates.values()) + [job_id]
-        with self.session() as connection:
+        with self.transaction() as connection:
             connection.execute(
                 f"UPDATE jobs SET {assignments} WHERE id = ?", values
             )
+            if updates.get("status") == "imported":
+                completed_at = updates.get("completed_at") or updates["updated_at"]
+                connection.execute(
+                    """
+                    UPDATE download_plans SET
+                        status = 'imported', progress = 100,
+                        error_code = NULL, error_message = NULL,
+                        completed_at = COALESCE(completed_at, ?), updated_at = ?
+                    WHERE job_id = ?
+                    """,
+                    (completed_at, updates["updated_at"], job_id),
+                )
 
     def fingerprint_exists(self, fingerprint: str) -> bool:
         return self.fingerprint_owner(fingerprint) is not None

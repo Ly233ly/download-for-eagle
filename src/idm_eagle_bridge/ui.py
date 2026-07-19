@@ -8,7 +8,7 @@ import json
 import threading
 from pathlib import Path
 from queue import Empty, Queue
-from tkinter import BOTH, END, LEFT, RIGHT, X, StringVar, Tk, Toplevel, filedialog, messagebox, simpledialog
+from tkinter import BOTH, END, LEFT, RIGHT, X, PhotoImage, StringVar, Tk, Toplevel, filedialog, messagebox, simpledialog
 from tkinter import ttk
 from urllib.parse import urlsplit
 
@@ -42,6 +42,34 @@ STATUS_TEXT = {
     "ignored_by_user": "本次忽略",
     "failed_permanent": "导入失败",
 }
+
+MEDIA_STATUS_TEXT = {
+    "queued": "等待本机下载",
+    "downloading": "本机正在下载",
+    "merging": "本机正在合并",
+    "validating": "正在校验",
+    "ready_to_import": "等待导入 Eagle",
+    "imported": "已导入 Eagle",
+    "completed_local": "已下载到本机",
+    "retry": "下载失败",
+    "canceled": "已停止",
+}
+
+MEDIA_ACTIVE_STATUSES = {"queued", "downloading", "merging", "validating", "ready_to_import"}
+
+
+def _display_bytes(value: object) -> str:
+    try:
+        size = max(0.0, float(value or 0))
+    except (TypeError, ValueError):
+        size = 0.0
+    if size <= 0:
+        return "未知"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+        size /= 1024
+    return "未知"
 
 
 def _set_window_icon(window: Tk | Toplevel) -> None:
@@ -247,6 +275,7 @@ class MainWindow:
     ) -> None:
         self.database = database
         self.api_server = api_server
+        self.media = api_server.api.media
         self.processing = processing
         self.external_tray = external_tray
         self.start_hidden = start_hidden and external_tray
@@ -257,8 +286,8 @@ class MainWindow:
         if self.start_hidden:
             self.root.withdraw()
         self.root.title("下载中转站")
-        self.root.geometry("980x600")
-        self.root.minsize(760, 440)
+        self.root.geometry("1120x720")
+        self.root.minsize(900, 600)
         self.root.protocol("WM_DELETE_WINDOW", self.hide if external_tray else self.quit)
         self.status_text = StringVar()
         self.pairing_text = StringVar()
@@ -275,6 +304,9 @@ class MainWindow:
         self.visible = not self.start_hidden
         self.site_rules_window: SiteRulesWindow | None = None
         self.last_jobs_revision: tuple[int, float] | None = None
+        self.last_plans_revision: tuple[int, float] | None = None
+        self.plan_rows: dict[str, dict] = {}
+        self.preview_image: PhotoImage | None = None
         self.last_eagle_check = 0.0
         self.eagle_connected = False
         self._build()
@@ -298,7 +330,7 @@ class MainWindow:
 
         ttk.Label(
             outer,
-            text="直接导入模式：来源网页是可选信息，没有来源也会导入 Eagle。",
+            text="浏览器插件只负责发现媒体；普通直链、分离音视频和 HLS/DASH 全部由本机软件下载、校验并按需导入 Eagle。",
             foreground="#475569",
         ).pack(fill=X, pady=(8, 0))
 
@@ -321,33 +353,90 @@ class MainWindow:
         )
         self.update_button.pack(side=RIGHT)
 
-        columns = ("time", "status", "file", "source", "message")
-        self.tree = ttk.Treeview(outer, columns=columns, show="headings", selectmode="browse")
-        self.tree.heading("time", text="时间")
-        self.tree.heading("status", text="状态")
-        self.tree.heading("file", text="文件")
-        self.tree.heading("source", text="来源网站")
-        self.tree.heading("message", text="说明")
-        self.tree.column("time", width=130, anchor="center")
-        self.tree.column("status", width=90, anchor="center")
-        self.tree.column("file", width=240)
-        self.tree.column("source", width=200)
-        self.tree.column("message", width=250)
-        self.tree.pack(fill=BOTH, expand=True)
+        self.notebook = ttk.Notebook(outer)
+        self.notebook.pack(fill=BOTH, expand=True)
+        self._build_media_tab()
+        self._build_idm_tab()
 
-        actions = ttk.Frame(outer, padding=(0, 10, 0, 0))
+        footer = ttk.Frame(outer, padding=(0, 10, 0, 0))
+        footer.pack(fill=X)
+        ttk.Button(footer, text="导出诊断", command=self.export_diagnostics).pack(side=LEFT)
+        if self.external_tray:
+            ttk.Button(footer, text="隐藏到右下角", command=self.hide).pack(side=RIGHT)
+        else:
+            ttk.Button(footer, text="最小化窗口", command=self.root.iconify).pack(side=RIGHT)
+
+    def _build_media_tab(self) -> None:
+        tab = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab, text="媒体下载")
+        columns = ("status", "progress", "title", "source", "updated")
+        self.plan_tree = ttk.Treeview(tab, columns=columns, show="headings", selectmode="browse", height=12)
+        for name, label in (
+            ("status", "状态"),
+            ("progress", "进度"),
+            ("title", "下载内容"),
+            ("source", "来源网站"),
+            ("updated", "最近更新"),
+        ):
+            self.plan_tree.heading(name, text=label)
+        self.plan_tree.column("status", width=125, anchor="center")
+        self.plan_tree.column("progress", width=75, anchor="center")
+        self.plan_tree.column("title", width=420)
+        self.plan_tree.column("source", width=170)
+        self.plan_tree.column("updated", width=135, anchor="center")
+        self.plan_tree.pack(fill=BOTH, expand=True)
+        self.plan_tree.bind("<<TreeviewSelect>>", lambda _event: self._update_plan_detail())
+
+        detail = ttk.LabelFrame(tab, text="任务详情", padding=10)
+        detail.pack(fill=X, pady=(10, 0))
+        self.preview_label = ttk.Label(detail, text="暂无预览", width=32, anchor="center")
+        self.preview_label.pack(side=LEFT, padx=(0, 14))
+        copy = ttk.Frame(detail)
+        copy.pack(side=LEFT, fill=BOTH, expand=True)
+        self.plan_title_text = StringVar(value="选择一项任务查看详情")
+        self.plan_status_text = StringVar(value="")
+        self.plan_source_text = StringVar(value="")
+        self.plan_file_text = StringVar(value="")
+        ttk.Label(copy, textvariable=self.plan_title_text, font=("Microsoft YaHei UI", 12, "bold")).pack(fill=X)
+        ttk.Label(copy, textvariable=self.plan_status_text).pack(fill=X, pady=(5, 0))
+        self.plan_progress = ttk.Progressbar(copy, maximum=100)
+        self.plan_progress.pack(fill=X, pady=(6, 4))
+        ttk.Label(copy, textvariable=self.plan_source_text, foreground="#475569").pack(fill=X)
+        ttk.Label(copy, textvariable=self.plan_file_text, foreground="#475569").pack(fill=X, pady=(3, 0))
+
+        actions = ttk.Frame(tab, padding=(0, 10, 0, 0))
         actions.pack(fill=X)
-        ttk.Button(actions, text="刷新", command=self.refresh).pack(side=LEFT)
-        ttk.Button(actions, text="立即重试（可选）", command=self.retry_selected).pack(side=LEFT, padx=6)
+        ttk.Button(actions, text="刷新", command=lambda: self.refresh(force=True)).pack(side=LEFT)
+        ttk.Button(actions, text="停止任务", command=self.stop_selected_plan).pack(side=LEFT, padx=6)
+        ttk.Button(actions, text="重试下载", command=self.retry_selected_plan).pack(side=LEFT, padx=6)
+        ttk.Button(actions, text="导入现有文件到 Eagle", command=self.import_selected_plan).pack(side=LEFT, padx=6)
+        ttk.Button(actions, text="打开文件位置", command=self.open_plan_location).pack(side=LEFT, padx=6)
+        ttk.Button(actions, text="打开来源网页", command=self.open_plan_source).pack(side=LEFT, padx=6)
+
+    def _build_idm_tab(self) -> None:
+        tab = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab, text="IDM 导入记录")
+        columns = ("time", "status", "file", "source", "message")
+        self.job_tree = ttk.Treeview(tab, columns=columns, show="headings", selectmode="browse")
+        self.job_tree.heading("time", text="时间")
+        self.job_tree.heading("status", text="状态")
+        self.job_tree.heading("file", text="文件")
+        self.job_tree.heading("source", text="来源网站")
+        self.job_tree.heading("message", text="说明")
+        self.job_tree.column("time", width=130, anchor="center")
+        self.job_tree.column("status", width=100, anchor="center")
+        self.job_tree.column("file", width=300)
+        self.job_tree.column("source", width=180)
+        self.job_tree.column("message", width=260)
+        self.job_tree.pack(fill=BOTH, expand=True)
+        actions = ttk.Frame(tab, padding=(0, 10, 0, 0))
+        actions.pack(fill=X)
+        ttk.Button(actions, text="刷新", command=lambda: self.refresh(force=True)).pack(side=LEFT)
+        ttk.Button(actions, text="重试导入", command=self.retry_selected).pack(side=LEFT, padx=6)
         ttk.Button(actions, text="打开文件位置", command=self.open_file_location).pack(side=LEFT, padx=6)
         ttk.Button(actions, text="打开来源网页", command=self.open_source).pack(side=LEFT, padx=6)
         ttk.Button(actions, text="补充/修改来源", command=self.assign_source).pack(side=LEFT, padx=6)
-        ttk.Button(actions, text="导出诊断", command=self.export_diagnostics).pack(side=LEFT, padx=6)
         ttk.Button(actions, text="清理已完成", command=self.clear_history).pack(side=LEFT, padx=6)
-        if self.external_tray:
-            ttk.Button(actions, text="隐藏到右下角", command=self.hide).pack(side=RIGHT)
-        else:
-            ttk.Button(actions, text="最小化窗口", command=self.root.iconify).pack(side=RIGHT)
 
     def run(self) -> None:
         self.root.mainloop()
@@ -517,13 +606,19 @@ class MainWindow:
         eagle_text = "Eagle 已连接" if self.eagle_connected else "正在等待 Eagle"
         host, port = self.api_server.address
         counts = self.database.job_status_counts()
-        active_count = sum(
+        job_active_count = sum(
             counts.get(status, 0)
             for status in ("waiting_source", "queued", "waiting_eagle", "retry")
         )
+        plans = self.media.list_plans(200)
+        media_active_count = sum(
+            1 for plan in plans if str(plan.get("status")) in MEDIA_ACTIVE_STATUSES
+        )
         status_parts = [f"v{APP_VERSION}", eagle_text, f"本机服务 {host}:{port}"]
-        if active_count:
-            status_parts.append(f"处理中 {active_count}")
+        if media_active_count:
+            status_parts.append(f"媒体任务 {media_active_count}")
+        if job_active_count:
+            status_parts.append(f"导入队列 {job_active_count}")
         if counts.get("failed_permanent", 0):
             status_parts.append(f"失败 {counts['failed_permanent']}")
         self.status_text.set(" · ".join(status_parts))
@@ -536,11 +631,13 @@ class MainWindow:
         else:
             self.pairing_text.set(f"Chrome 配对码：{self.pairing.pairing_code}")
 
+        self._refresh_media_tasks(plans, force)
+
         revision = self.database.jobs_revision()
         if force or revision != self.last_jobs_revision:
             selected = self.selected_job_id()
-            for item in self.tree.get_children():
-                self.tree.delete(item)
+            for item in self.job_tree.get_children():
+                self.job_tree.delete(item)
             for job in self.database.list_jobs(500):
                 created = time.strftime("%Y-%m-%d %H:%M", time.localtime(job["created_at"]))
                 source = "未记录"
@@ -549,7 +646,7 @@ class MainWindow:
                 message = job.get("error_message") or ""
                 if job["status"] == "imported" and not job.get("source_url"):
                     message = "已直接导入，未保存来源网页"
-                self.tree.insert(
+                self.job_tree.insert(
                     "",
                     END,
                     iid=job["id"],
@@ -561,13 +658,157 @@ class MainWindow:
                         message,
                     ),
                 )
-            if selected and self.tree.exists(selected):
-                self.tree.selection_set(selected)
+            if selected and self.job_tree.exists(selected):
+                self.job_tree.selection_set(selected)
             self.last_jobs_revision = revision
-        self.refresh_after_id = self.root.after(5000, self.refresh)
+        self.refresh_after_id = self.root.after(1000 if media_active_count else 4000, self.refresh)
+
+    def _refresh_media_tasks(self, plans: list[dict], force: bool) -> None:
+        revision = (
+            len(plans),
+            max((float(plan.get("updated_at") or 0) for plan in plans), default=0.0),
+        )
+        self.plan_rows = {str(plan["id"]): plan for plan in plans}
+        selected = self.selected_plan_id()
+        if force or revision != self.last_plans_revision:
+            for item in self.plan_tree.get_children():
+                self.plan_tree.delete(item)
+            for plan in plans:
+                status = str(plan.get("status") or "")
+                job_status = str(plan.get("job_status") or "")
+                if status == "ready_to_import" and job_status == "waiting_eagle":
+                    status_label = "等待 Eagle"
+                elif status == "ready_to_import" and job_status == "failed_permanent":
+                    status_label = "Eagle 导入失败"
+                else:
+                    status_label = MEDIA_STATUS_TEXT.get(status, status)
+                source = "未记录"
+                if plan.get("page_url"):
+                    source = urlsplit(str(plan["page_url"])).hostname or "已记录"
+                title = str(plan.get("title") or plan.get("output_name") or "未命名任务")
+                updated = time.strftime(
+                    "%Y-%m-%d %H:%M", time.localtime(float(plan.get("updated_at") or 0))
+                )
+                self.plan_tree.insert(
+                    "",
+                    END,
+                    iid=str(plan["id"]),
+                    values=(
+                        status_label,
+                        f"{float(plan.get('progress') or 0):.0f}%",
+                        title,
+                        source,
+                        updated,
+                    ),
+                )
+            if selected and self.plan_tree.exists(selected):
+                self.plan_tree.selection_set(selected)
+            elif plans:
+                first = str(plans[0]["id"])
+                self.plan_tree.selection_set(first)
+            self.last_plans_revision = revision
+        self._update_plan_detail()
+
+    def selected_plan_id(self) -> str | None:
+        selected = self.plan_tree.selection()
+        return selected[0] if selected else None
+
+    def selected_plan(self) -> dict | None:
+        plan_id = self.selected_plan_id()
+        return self.plan_rows.get(plan_id) if plan_id else None
+
+    def _update_plan_detail(self) -> None:
+        plan = self.selected_plan()
+        if not plan:
+            self.plan_title_text.set("选择一项任务查看详情")
+            self.plan_status_text.set("")
+            self.plan_source_text.set("")
+            self.plan_file_text.set("")
+            self.plan_progress.configure(value=0)
+            self.preview_image = None
+            self.preview_label.configure(image="", text="暂无预览")
+            return
+        status = str(plan.get("status") or "")
+        status_label = MEDIA_STATUS_TEXT.get(status, status)
+        if status == "ready_to_import" and plan.get("job_status") == "waiting_eagle":
+            status_label = "等待 Eagle"
+        elif status == "ready_to_import" and plan.get("job_status") == "failed_permanent":
+            status_label = "Eagle 导入失败"
+        detail = str(plan.get("phase_detail") or "")
+        error = str(plan.get("error_message") or plan.get("job_error") or "")
+        self.plan_title_text.set(str(plan.get("title") or plan.get("output_name") or "未命名任务"))
+        self.plan_status_text.set(" · ".join(value for value in (status_label, detail, error) if value))
+        source = str(plan.get("page_url") or "未记录来源网页")
+        self.plan_source_text.set(f"来源：{source}")
+        downloaded = _display_bytes(plan.get("downloaded_bytes"))
+        total = _display_bytes(plan.get("total_bytes"))
+        output = str(plan.get("final_path") or plan.get("output_name") or "")
+        self.plan_file_text.set(f"文件：{output} · 已处理 {downloaded} / {total}")
+        self.plan_progress.configure(value=max(0.0, min(100.0, float(plan.get("progress") or 0))))
+        preview = Path(str(plan.get("preview_path") or ""))
+        if preview.is_file():
+            try:
+                self.preview_image = PhotoImage(file=str(preview))
+                self.preview_label.configure(image=self.preview_image, text="")
+                return
+            except Exception:
+                pass
+        self.preview_image = None
+        self.preview_label.configure(image="", text="下载完成后显示视频预览")
+
+    def stop_selected_plan(self) -> None:
+        plan = self.selected_plan()
+        if not plan:
+            messagebox.showinfo("提示", "请先选择一项媒体任务")
+            return
+        try:
+            self.media.stop_plan(str(plan["id"]))
+        except Exception as exc:
+            messagebox.showerror("停止失败", str(exc), parent=self.root)
+        self.refresh(force=True)
+
+    def retry_selected_plan(self) -> None:
+        plan = self.selected_plan()
+        if not plan:
+            messagebox.showinfo("提示", "请先选择一项媒体任务")
+            return
+        try:
+            self.media.retry_plan(str(plan["id"]))
+        except Exception as exc:
+            messagebox.showerror("无法重试", str(exc), parent=self.root)
+            return
+        self.refresh(force=True)
+
+    def open_plan_location(self) -> None:
+        plan = self.selected_plan()
+        path = Path(str(plan.get("final_path") or "")) if plan else None
+        if not path or not path.is_file():
+            messagebox.showinfo("文件尚未完成", "任务完成下载后才能打开文件位置")
+            return
+        subprocess.Popen(["explorer.exe", "/select,", str(path)])
+
+    def import_selected_plan(self) -> None:
+        plan = self.selected_plan()
+        if not plan:
+            messagebox.showinfo("提示", "请先选择一项媒体任务")
+            return
+        try:
+            self.media.import_completed_plan(str(plan["id"]))
+        except Exception as exc:
+            messagebox.showerror("无法导入", str(exc), parent=self.root)
+            return
+        self.processing.wake()
+        self.refresh(force=True)
+
+    def open_plan_source(self) -> None:
+        plan = self.selected_plan()
+        if not plan or not plan.get("page_url"):
+            messagebox.showinfo("没有来源", "这项任务没有记录来源网页")
+            return
+        webbrowser.open(str(plan["page_url"]))
 
     def selected_job_id(self) -> str | None:
-        selected = self.tree.selection()
+        selected = self.job_tree.selection()
         return selected[0] if selected else None
 
     def selected_job(self) -> dict | None:
@@ -670,9 +911,34 @@ class MainWindow:
                     "errorMessage": job.get("error_message"),
                 }
             )
+        media_rows = []
+        for plan in self.media.list_plans(200):
+            source_domain = ""
+            if plan.get("page_url"):
+                source_domain = urlsplit(str(plan["page_url"])).hostname or ""
+            media_rows.append(
+                {
+                    "time": plan["created_at"],
+                    "status": plan["status"],
+                    "title": plan.get("title"),
+                    "outputName": plan.get("output_name"),
+                    "sourceDomain": source_domain,
+                    "progress": plan.get("progress"),
+                    "downloadedBytes": plan.get("downloaded_bytes"),
+                    "totalBytes": plan.get("total_bytes"),
+                    "phase": plan.get("phase_detail"),
+                    "errorCode": plan.get("error_code"),
+                    "errorMessage": plan.get("error_message") or plan.get("job_error"),
+                }
+            )
         Path(target).write_text(
             json.dumps(
-                {"formatVersion": 1, "appVersion": APP_VERSION, "jobs": rows},
+                {
+                    "formatVersion": 2,
+                    "appVersion": APP_VERSION,
+                    "mediaPlans": media_rows,
+                    "jobs": rows,
+                },
                 ensure_ascii=False,
                 indent=2,
             ),
