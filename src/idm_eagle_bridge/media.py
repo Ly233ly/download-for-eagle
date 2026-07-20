@@ -17,15 +17,28 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from .database import Database
+from .network_proxy import (
+    NetworkProxyManager,
+    ProxyConfigurationError,
+    ProxyRoute,
+)
 
 
 ALLOWED_CONTAINERS = frozenset({"mp4", "mkv", "webm", "m4a", "mp3", "ts"})
 ALLOWED_STREAM_ROLES = frozenset({"video", "audio", "subtitle", "media"})
 SUBTITLE_EXTENSIONS = frozenset({"vtt", "srt", "ass", "ssa", "ttml"})
 MANIFEST_EXTENSIONS = frozenset({"m3u8", "m3u", "mpd"})
+NETWORK_RETRYABLE_ERRORS = frozenset(
+    {
+        "desktop_download_failed",
+        "page_resolver_failed",
+        "youtube_resolver_failed",
+        "subtitle_download_failed",
+    }
+)
 WINDOWS_RESERVED_NAMES = frozenset(
     {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
 )
@@ -196,6 +209,7 @@ class MediaCoordinator:
         ready_callback: Callable[[], None] | None = None,
     ) -> None:
         self.database = database
+        self.network_proxy = NetworkProxyManager(database)
         self.ready_callback = ready_callback
         self.executor = ThreadPoolExecutor(
             max_workers=max(1, workers), thread_name_prefix="media-plan"
@@ -497,7 +511,32 @@ class MediaCoordinator:
 
     def _process_guarded(self, plan_id: str) -> None:
         try:
-            self._process_remote(plan_id)
+            with self._lock:
+                runtime = dict(self._remote_inputs.get(plan_id, {}))
+            streams = runtime.get("streams") if isinstance(runtime.get("streams"), list) else []
+            target_url = str(streams[0].get("url") or "") if streams else ""
+            try:
+                routes = self.network_proxy.routes_for(target_url)
+            except ProxyConfigurationError as exc:
+                raise MediaPlanError(f"网络代理设置无效：{exc}", "proxy_configuration_invalid") from exc
+            failures: list[tuple[ProxyRoute, MediaPlanError]] = []
+            for index, route in enumerate(routes):
+                try:
+                    self._process_remote(plan_id, route)
+                    break
+                except MediaPlanError as exc:
+                    failures.append((route, exc))
+                    can_switch = (
+                        index + 1 < len(routes)
+                        and exc.code in NETWORK_RETRYABLE_ERRORS
+                        and exc.code != "canceled"
+                    )
+                    if not can_switch:
+                        raise self._network_failure_with_guidance(
+                            exc, target_url, failures
+                        ) from exc
+                    next_route = routes[index + 1]
+                    self._prepare_network_route_retry(plan_id, route, next_route)
         except MediaPlanError as exc:
             if exc.code == "canceled":
                 self._cancel(plan_id, str(exc))
@@ -522,7 +561,68 @@ class MediaCoordinator:
             if reschedule:
                 self.schedule(plan_id)
 
-    def _process_remote(self, plan_id: str) -> None:
+    def _prepare_network_route_retry(
+        self,
+        plan_id: str,
+        failed_route: ProxyRoute,
+        next_route: ProxyRoute,
+    ) -> None:
+        now = time.time()
+        with self.database.session() as connection:
+            connection.execute(
+                """
+                UPDATE download_plans SET status = 'retry', progress = 2,
+                    downloaded_bytes = 0,
+                    phase_detail = ?, error_code = NULL, error_message = NULL,
+                    updated_at = ?
+                WHERE id = ? AND status IN ('downloading', 'merging', 'validating')
+                """,
+                (
+                    f"{failed_route.label}连接失败，正在改用{next_route.label}（仅重试一次）",
+                    now,
+                    plan_id,
+                ),
+            )
+
+    def _network_failure_with_guidance(
+        self,
+        error: MediaPlanError,
+        target_url: str,
+        failures: list[tuple[ProxyRoute, MediaPlanError]],
+    ) -> MediaPlanError:
+        if error.code not in NETWORK_RETRYABLE_ERRORS:
+            return error
+        raw = str(error)
+        lower = raw.lower()
+        looks_like_network_denial = any(
+            marker in lower
+            for marker in (
+                "403",
+                "forbidden",
+                "timed out",
+                "timeout",
+                "network is unreachable",
+                "connection refused",
+                "connection reset",
+                "server returned",
+            )
+        )
+        if not looks_like_network_denial:
+            return error
+        status = self.network_proxy.status(target_url)
+        if len(failures) > 1:
+            suffix = "已自动尝试系统代理和直连，均未成功；请检查代理线路或改用手动代理。"
+        elif status.get("mode") == "manual":
+            suffix = "请确认手动代理地址、端口和代理软件运行状态。"
+        elif status.get("mode") == "direct":
+            suffix = "当前设置为始终直连；该网站需要代理时，请改为自动或手动代理。"
+        elif not status.get("active"):
+            suffix = "浏览器可能正在使用独立代理，但本机未检测到系统代理；请开启系统代理/TUN，或在网络设置中填写 HTTP/混合端口。"
+        else:
+            suffix = "系统代理连接未成功；请检查代理线路，或在网络设置中填写代理软件的 HTTP/混合端口。"
+        return MediaPlanError(f"{raw}；{suffix}", error.code)
+
+    def _process_remote(self, plan_id: str, proxy_route: ProxyRoute) -> None:
         with self._lock:
             runtime = dict(self._remote_inputs.get(plan_id, {}))
         contexts = [dict(item) for item in runtime.get("streams", [])]
@@ -560,6 +660,7 @@ class MediaCoordinator:
             if media_count > 1
             else "本机软件正在下载直链媒体"
         )
+        initial_detail += f"（{proxy_route.label}）"
         now = time.time()
         with self.database.transaction() as connection:
             cursor = connection.execute(
@@ -605,19 +706,29 @@ class MediaCoordinator:
             raise MediaPlanError("下载方案缺少音视频内容", "plan_missing_media")
         if is_youtube_resolver:
             media_contexts = self._resolve_youtube_streams(
-                plan_id, media_contexts[0], plan_root
+                plan_id, media_contexts[0], plan_root, proxy_route.url
             )
-            self._set_status(plan_id, "downloading", 3, "YouTube 画质已解析，本机正在下载并合并音视频")
+            self._set_status(
+                plan_id,
+                "downloading",
+                3,
+                f"YouTube 画质已解析，本机正在下载并合并音视频（{proxy_route.label}）",
+            )
         elif is_page_resolver:
             media_contexts = self._resolve_page_streams(
-                plan_id, media_contexts[0], plan_root
+                plan_id, media_contexts[0], plan_root, proxy_route.url
             )
-            self._set_status(plan_id, "downloading", 3, "页面媒体已识别，本机正在下载并合并音视频")
+            self._set_status(
+                plan_id,
+                "downloading",
+                3,
+                f"页面媒体已识别，本机正在下载并合并音视频（{proxy_route.label}）",
+            )
 
         ffmpeg = resolve_media_tool("ffmpeg")
         command = [str(ffmpeg), "-hide_banner", "-y"]
         for context in media_contexts:
-            command.extend(self._ffmpeg_input_arguments(context))
+            command.extend(self._ffmpeg_input_arguments(context, proxy_route.url))
         video_index = next(
             (i for i, item in enumerate(media_contexts) if str(item.get("role", "")).startswith("video")),
             None,
@@ -628,7 +739,9 @@ class MediaCoordinator:
         )
         if len(media_contexts) == 1:
             if is_manifest:
-                video_stream, audio_stream = self._probe_manifest_stream_indexes(media_contexts[0])
+                video_stream, audio_stream = self._probe_manifest_stream_indexes(
+                    media_contexts[0], proxy_route.url
+                )
                 if video_stream is not None:
                     command.extend(["-map", f"0:{video_stream}"])
                 if audio_stream is not None:
@@ -741,7 +854,11 @@ class MediaCoordinator:
             work_path.unlink(missing_ok=True)
             raise
         subtitle_files = self._download_subtitles(
-            plan_id, subtitle_contexts, plan_root, destination
+            plan_id,
+            subtitle_contexts,
+            plan_root,
+            destination,
+            proxy_route.url,
         )
         os.replace(work_path, destination)
         completed_subtitles: list[Path] = []
@@ -850,6 +967,7 @@ class MediaCoordinator:
         plan_id: str,
         context: dict[str, Any],
         plan_root: Path,
+        proxy_url: str | None = None,
     ) -> list[dict[str, Any]]:
         quality = str(context.get("preferred_quality") or "").lower()
         match = re.fullmatch(r"(\d{2,5})p", quality)
@@ -883,6 +1001,8 @@ class MediaCoordinator:
             "--format",
             f"bestvideo[height={height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height={height}]+bestaudio/best[height={height}]",
         ]
+        if proxy_url:
+            command.extend(["--proxy", proxy_url])
         headers = context.get("headers") if isinstance(context.get("headers"), dict) else {}
         user_agent = _safe_text(headers.get("user-agent"), 500)
         referer = _safe_text(headers.get("referer"), 2048)
@@ -958,6 +1078,7 @@ class MediaCoordinator:
         plan_id: str,
         context: dict[str, Any],
         plan_root: Path,
+        proxy_url: str | None = None,
     ) -> list[dict[str, Any]]:
         url = canonical_page_resolver_url(context.get("url"))
         parsed = urlsplit(url)
@@ -991,6 +1112,8 @@ class MediaCoordinator:
                 "best"
             ),
         ]
+        if proxy_url:
+            command.extend(["--proxy", proxy_url])
         user_agent = _safe_text(headers.get("user-agent"), 500)
         referer = _safe_text(headers.get("referer"), 2048)
         if user_agent and "\r" not in user_agent and "\n" not in user_agent:
@@ -1073,10 +1196,14 @@ class MediaCoordinator:
         return resolved
 
     @staticmethod
-    def _ffmpeg_input_arguments(context: dict[str, Any]) -> list[str]:
+    def _ffmpeg_input_arguments(
+        context: dict[str, Any], proxy_url: str | None = None
+    ) -> list[str]:
         url = str(context.get("url") or "")
         headers = context.get("headers") if isinstance(context.get("headers"), dict) else {}
         arguments: list[str] = []
+        if proxy_url:
+            arguments.extend(["-http_proxy", proxy_url])
         user_agent = headers.get("user-agent")
         if user_agent:
             arguments.extend(["-user_agent", str(user_agent)])
@@ -1170,7 +1297,7 @@ class MediaCoordinator:
         )
 
     def _probe_manifest_stream_indexes(
-        self, context: dict[str, Any]
+        self, context: dict[str, Any], proxy_url: str | None = None
     ) -> tuple[int | None, int | None]:
         preferred_match = re.fullmatch(
             r"(\d{2,5})p", str(context.get("preferred_quality") or "").lower()
@@ -1182,7 +1309,7 @@ class MediaCoordinator:
             "-show_programs",
             "-show_streams",
             "-of", "json",
-            *self._ffmpeg_input_arguments(context),
+            *self._ffmpeg_input_arguments(context, proxy_url),
         ]
         try:
             completed = subprocess.run(
@@ -1203,6 +1330,7 @@ class MediaCoordinator:
         contexts: list[dict[str, Any]],
         plan_root: Path,
         media_destination: Path,
+        proxy_url: str | None = None,
     ) -> list[tuple[Path, Path]]:
         results: list[tuple[Path, Path]] = []
         for index, context in enumerate(contexts, start=1):
@@ -1221,20 +1349,27 @@ class MediaCoordinator:
                 media_destination.parent
                 / f"{media_destination.stem}.{descriptor}.{extension}"
             )
-            self._download_direct_subtitle(plan_id, context, temporary)
+            self._download_direct_subtitle(plan_id, context, temporary, proxy_url)
             results.append((temporary, target))
         return results
 
     def _download_direct_subtitle(
-        self, plan_id: str, context: dict[str, Any], target: Path
+        self,
+        plan_id: str,
+        context: dict[str, Any],
+        target: Path,
+        proxy_url: str | None = None,
     ) -> None:
         headers = {
             name.title(): str(value)
             for name, value in dict(context.get("headers") or {}).items()
         }
         request = Request(str(context.get("url") or ""), headers=headers)
+        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else {}
+        opener = build_opener(ProxyHandler(proxies))
         try:
-            with urlopen(request, timeout=60) as response, target.open("wb") as output:
+            response_context = opener.open(request, timeout=60)
+            with response_context as response, target.open("wb") as output:
                 total = 0
                 while chunk := response.read(256 * 1024):
                     with self._lock:
@@ -1673,7 +1808,9 @@ class MediaCoordinator:
 
     def health(self) -> dict[str, Any]:
         if self._health_cache and time.time() - self._health_cache[0] < 60:
-            return dict(self._health_cache[1])
+            cached = dict(self._health_cache[1])
+            cached["networkProxy"] = self.network_proxy.status()
+            return cached
         with self.database.session() as connection:
             schema = int(connection.execute("PRAGMA user_version").fetchone()[0])
         result: dict[str, Any] = {
@@ -1706,5 +1843,8 @@ class MediaCoordinator:
                 result[name] = {"ok": False, "error": str(exc)}
         result["ok"] = bool(result["ffmpeg"].get("ok") and result["ffprobe"].get("ok"))
         result["youtubeResolver"] = bool(result["yt-dlp"].get("ok") and result["deno"].get("ok"))
-        self._health_cache = (time.time(), dict(result))
+        result["networkProxy"] = self.network_proxy.status()
+        cached = dict(result)
+        cached.pop("networkProxy", None)
+        self._health_cache = (time.time(), cached)
         return result

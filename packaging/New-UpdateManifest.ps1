@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputPath,
     [string]$Notes = "Stability improvements and bug fixes.",
+    [string]$AssetName = "",
     [string]$PrivateKeyPath = ""
 )
 
@@ -18,8 +19,14 @@ $resolvedZip = (Resolve-Path -LiteralPath $ZipPath).Path
 $resolvedKey = (Resolve-Path -LiteralPath $PrivateKeyPath).Path
 $file = Get-Item -LiteralPath $resolvedZip
 $checksum = (Get-FileHash -LiteralPath $resolvedZip -Algorithm SHA256).Hash.ToLowerInvariant()
-$assetName = [Uri]::EscapeDataString($file.Name).Replace("%2F", "/")
-$downloadUrl = "https://github.com/Ly233ly/download-for-eagle/releases/download/v$Version/$assetName"
+if ([string]::IsNullOrWhiteSpace($AssetName)) {
+    $AssetName = $file.Name
+}
+if ([IO.Path]::GetFileName($AssetName) -ne $AssetName) {
+    throw "发布资产名称不能包含目录：$AssetName"
+}
+$encodedAssetName = [Uri]::EscapeDataString($AssetName).Replace("%2F", "/")
+$downloadUrl = "https://github.com/Ly233ly/download-for-eagle/releases/download/v$Version/$encodedAssetName"
 
 # Keep this property order aligned with the client's sort_keys=True canonical form.
 $unsigned = [ordered]@{

@@ -17,6 +17,7 @@ from .constants import APP_VERSION
 from .control_signal import ControlSignals
 from .database import Database
 from .eagle import EagleClient, EagleImportError, EagleUnavailable
+from .network_proxy import ProxyConfigurationError
 from .security import PairingManager
 from .service import ProcessingService
 from .updater import (
@@ -264,6 +265,110 @@ class SiteRulesWindow:
         self.window.destroy()
 
 
+class ProxySettingsWindow:
+    def __init__(self, parent: "MainWindow") -> None:
+        self.parent = parent
+        self.manager = parent.media.network_proxy
+        self.window = Toplevel(parent.root)
+        self.window.title("网络连接")
+        self.window.geometry("560x360")
+        self.window.resizable(False, False)
+        self.window.transient(parent.root)
+        _set_window_icon(self.window)
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
+        configuration = self.manager.configuration()
+        self.mode = StringVar(value=configuration["mode"])
+        self.manual_url = StringVar(value=configuration["manualUrl"])
+        self.detected_text = StringVar()
+        self._build()
+        self._mode_changed()
+        self.refresh_status()
+
+    def _build(self) -> None:
+        outer = ttk.Frame(self.window, padding=18)
+        outer.pack(fill=BOTH, expand=True)
+        ttk.Label(
+            outer,
+            text="网络连接",
+            font=("Microsoft YaHei UI", 15, "bold"),
+        ).pack(anchor="w")
+        ttk.Label(
+            outer,
+            text="默认自动跟随 Windows 系统代理，下载 Behance 等网站时不需要强制开启 TUN。",
+            foreground="#475569",
+            wraplength=515,
+        ).pack(fill=X, pady=(7, 12))
+
+        options = ttk.LabelFrame(outer, text="连接方式", padding=12)
+        options.pack(fill=X)
+        for value, label in (
+            ("auto", "自动（推荐）— 跟随 Windows 系统代理，失败时最多切换一次线路"),
+            ("direct", "始终直连 — 不使用任何代理"),
+            ("manual", "手动代理 — 适合只给 Chrome 配置代理的情况"),
+        ):
+            ttk.Radiobutton(
+                options,
+                text=label,
+                value=value,
+                variable=self.mode,
+                command=self._mode_changed,
+            ).pack(anchor="w", pady=2)
+
+        manual = ttk.Frame(outer, padding=(0, 12, 0, 0))
+        manual.pack(fill=X)
+        ttk.Label(manual, text="HTTP/混合端口：").pack(side=LEFT)
+        self.manual_entry = ttk.Entry(manual, textvariable=self.manual_url)
+        self.manual_entry.pack(side=LEFT, fill=X, expand=True, padx=(8, 0))
+        ttk.Label(
+            outer,
+            text="示例：127.0.0.1:7890。请填写代理软件显示的 HTTP 或 Mixed 端口。",
+            foreground="#64748b",
+        ).pack(fill=X, pady=(5, 0))
+
+        detected = ttk.Frame(outer, padding=(0, 14, 0, 0))
+        detected.pack(fill=X)
+        ttk.Label(detected, textvariable=self.detected_text).pack(side=LEFT)
+        ttk.Button(detected, text="重新检测", command=self.refresh_status).pack(side=RIGHT)
+
+        actions = ttk.Frame(outer, padding=(0, 16, 0, 0))
+        actions.pack(fill=X)
+        ttk.Button(actions, text="取消", command=self.close).pack(side=RIGHT)
+        ttk.Button(actions, text="保存", command=self.save).pack(side=RIGHT, padx=(0, 8))
+
+    def _mode_changed(self) -> None:
+        self.manual_entry.configure(
+            state="normal" if self.mode.get() == "manual" else "disabled"
+        )
+
+    def refresh_status(self) -> None:
+        status = self.manager.status()
+        self.detected_text.set(f"当前检测：{status['summary']}")
+
+    def save(self) -> None:
+        try:
+            self.manager.configure(self.mode.get(), self.manual_url.get())
+        except ProxyConfigurationError as exc:
+            messagebox.showerror("代理地址无效", str(exc), parent=self.window)
+            return
+        self.parent.media._health_cache = None
+        self.parent.refresh(force=True)
+        messagebox.showinfo(
+            "保存完成",
+            "网络设置已保存，新任务和重新创建的任务会自动使用。",
+            parent=self.window,
+        )
+        self.close()
+
+    def focus(self) -> None:
+        self.window.deiconify()
+        self.window.lift()
+        self.window.focus_force()
+
+    def close(self) -> None:
+        self.parent.proxy_settings_window = None
+        self.window.destroy()
+
+
 class MainWindow:
     def __init__(
         self,
@@ -292,6 +397,7 @@ class MainWindow:
         self.status_text = StringVar()
         self.pairing_text = StringVar()
         self.site_rules_text = StringVar(value="网站规则")
+        self.network_proxy_text = StringVar(value="网络：自动")
         self.update_button_text = StringVar(value="检查更新")
         self.control_signals = ControlSignals() if external_tray else None
         self.control_after_id: str | None = None
@@ -303,6 +409,7 @@ class MainWindow:
         self.update_downloading = False
         self.visible = not self.start_hidden
         self.site_rules_window: SiteRulesWindow | None = None
+        self.proxy_settings_window: ProxySettingsWindow | None = None
         self.last_jobs_revision: tuple[int, float] | None = None
         self.last_plans_revision: tuple[int, float] | None = None
         self.plan_rows: dict[str, dict] = {}
@@ -346,6 +453,11 @@ class MainWindow:
         ttk.Button(pairing, textvariable=self.site_rules_text, command=self.show_site_rules).pack(
             side=LEFT, padx=(8, 0)
         )
+        ttk.Button(
+            pairing,
+            textvariable=self.network_proxy_text,
+            command=self.show_proxy_settings,
+        ).pack(side=LEFT, padx=(8, 0))
         self.update_button = ttk.Button(
             pairing,
             textvariable=self.update_button_text,
@@ -626,6 +738,8 @@ class MainWindow:
             1 for rule in self.database.list_site_rules() if rule["enabled"]
         )
         self.site_rules_text.set(f"网站规则（已开启 {enabled_sites}）")
+        proxy_status = self.media.network_proxy.status()
+        self.network_proxy_text.set(f"网络：{proxy_status['summary']}")
         if self.pairing.paired_origin:
             self.pairing_text.set("Chrome 已安全配对")
         else:
@@ -934,8 +1048,13 @@ class MainWindow:
         Path(target).write_text(
             json.dumps(
                 {
-                    "formatVersion": 2,
+                    "formatVersion": 3,
                     "appVersion": APP_VERSION,
+                    "networkProxy": {
+                        key: value
+                        for key, value in self.media.network_proxy.status().items()
+                        if key in {"mode", "active", "source", "endpoint", "summary"}
+                    },
                     "mediaPlans": media_rows,
                     "jobs": rows,
                 },
@@ -944,7 +1063,10 @@ class MainWindow:
             ),
             encoding="utf-8",
         )
-        messagebox.showinfo("导出完成", "诊断记录已保存。完整路径和来源网址未包含在文件中。")
+        messagebox.showinfo(
+            "导出完成",
+            "诊断记录已保存。完整路径、来源网址和代理密码未包含在文件中。",
+        )
 
     def clear_history(self) -> None:
         if not messagebox.askyesno(
@@ -968,6 +1090,15 @@ class MainWindow:
             return
         self.site_rules_window = SiteRulesWindow(self)
 
+    def show_proxy_settings(self) -> None:
+        if (
+            self.proxy_settings_window
+            and self.proxy_settings_window.window.winfo_exists()
+        ):
+            self.proxy_settings_window.focus()
+            return
+        self.proxy_settings_window = ProxySettingsWindow(self)
+
     def unpair(self) -> None:
         if not self.pairing.paired_origin:
             messagebox.showinfo("未配对", "当前没有已配对的 Chrome 扩展")
@@ -980,6 +1111,8 @@ class MainWindow:
     def quit(self) -> None:
         if self.site_rules_window and self.site_rules_window.window.winfo_exists():
             self.site_rules_window.close()
+        if self.proxy_settings_window and self.proxy_settings_window.window.winfo_exists():
+            self.proxy_settings_window.close()
         if self.refresh_after_id:
             self.root.after_cancel(self.refresh_after_id)
             self.refresh_after_id = None

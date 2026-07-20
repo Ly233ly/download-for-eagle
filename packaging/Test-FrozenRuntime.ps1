@@ -9,7 +9,7 @@ Set-StrictMode -Version Latest
 
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 if ([string]::IsNullOrWhiteSpace($PackageRoot)) {
-    $PackageRoot = Join-Path $projectRoot "release\下载中转站-1.2.10-Windows-x64\下载中转站-1.2.10"
+    $PackageRoot = Join-Path $projectRoot "release\下载中转站-1.2.11-Windows-x64\下载中转站-1.2.11"
 }
 $PackageRoot = [IO.Path]::GetFullPath($PackageRoot)
 $backend = Join-Path $PackageRoot "app\runtime\下载中转站后台\下载中转站后台.exe"
@@ -57,9 +57,9 @@ try {
     if ($null -eq $listener -or [int]$listener.OwningProcess -ne [int]$process.Id) {
         throw "端口 47652 的健康响应不属于待测冻结后端进程。"
     }
-    if ([string]$health.version -ne "1.2.10" -or [int]$health.extensionProtocol -ne 1 -or [int]$health.databaseSchema -ne 5 -or -not [bool]$health.mediaReady -or -not [bool]$health.youtubeResolverReady -or [string]$health.downloadEngine -ne "desktop_ffmpeg") {
+    if ([string]$health.version -ne "1.2.11" -or [int]$health.extensionProtocol -ne 1 -or [int]$health.databaseSchema -ne 5 -or -not [bool]$health.mediaReady -or -not [bool]$health.youtubeResolverReady -or [string]$health.downloadEngine -ne "desktop_ffmpeg") {
         $healthSummary = $health | ConvertTo-Json -Compress
-        throw "冻结后端健康门字段不符合 1.2.10 要求：$healthSummary"
+        throw "冻结后端健康门字段不符合 1.2.11 要求：$healthSummary"
     }
 
     $quotedSample = '"' + $sample.Replace('"', '\"') + '"'
@@ -73,7 +73,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $jobCount -ne 1) { throw "冻结接收模式未持久化唯一任务。" }
 
     $evidence = [ordered]@{
-        version = "1.2.10"
+        version = "1.2.11"
         testedAtUtc = [DateTime]::UtcNow.ToString("o")
         backend = "app/runtime/下载中转站后台/下载中转站后台.exe"
         processName = $process.ProcessName
@@ -91,7 +91,7 @@ try {
         denoBundled = (Test-Path -LiteralPath (Join-Path $PackageRoot "app\media-tools\deno.exe"))
     }
     if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
-        $EvidencePath = Join-Path $scratchRoot "frozen-runtime-1.2.10-evidence.json"
+        $EvidencePath = Join-Path $scratchRoot "frozen-runtime-1.2.11-evidence.json"
     }
     $evidence | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $EvidencePath -Encoding UTF8
     $evidence | ConvertTo-Json -Depth 4

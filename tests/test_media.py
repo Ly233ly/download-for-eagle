@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import http.server
+import io
 import os
 import subprocess
 import tempfile
@@ -20,6 +21,7 @@ from idm_eagle_bridge.media import (
     resolve_media_tool,
     safe_output_name,
 )
+from idm_eagle_bridge.network_proxy import ProxyRoute
 
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
@@ -384,8 +386,10 @@ class MediaCoordinatorTests(unittest.TestCase):
                     },
                 },
                 self.root / "resolver-work",
+                "http://127.0.0.1:7890",
             )
         command = popen.call_args.args[0]
+        self.assertEqual(command[command.index("--proxy") + 1], "http://127.0.0.1:7890")
         self.assertIn("bestvideo[height=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height=1440]+bestaudio/best[height=1440]", command)
         self.assertNotIn("top-secret", " ".join(str(value) for value in command))
         cookie_path = Path(command[command.index("--cookies") + 1])
@@ -464,9 +468,13 @@ class MediaCoordinatorTests(unittest.TestCase):
             "idm_eagle_bridge.media.subprocess.Popen", return_value=process
         ) as popen:
             streams = self.coordinator._resolve_page_streams(
-                "plan-page", context, self.root / "page-resolver-work"
+                "plan-page",
+                context,
+                self.root / "page-resolver-work",
+                "http://127.0.0.1:7890",
             )
         command = popen.call_args.args[0]
+        self.assertEqual(command[command.index("--proxy") + 1], "http://127.0.0.1:7890")
         selector = command[command.index("--format") + 1]
         self.assertTrue(selector.startswith("bestvideo[ext=mp4]+bestaudio[ext=m4a]/"))
         self.assertIn("bestvideo[ext=mp4]+bestaudio[ext=mp4]", selector)
@@ -591,6 +599,24 @@ class MediaCoordinatorTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+    def test_direct_subtitle_download_explicitly_bypasses_system_proxy(self) -> None:
+        target = self.root / "direct-subtitle.vtt"
+        opener = Mock()
+        opener.open.return_value = io.BytesIO(b"WEBVTT\n")
+
+        with patch("idm_eagle_bridge.media.ProxyHandler") as proxy_handler, patch(
+            "idm_eagle_bridge.media.build_opener", return_value=opener
+        ):
+            self.coordinator._download_direct_subtitle(
+                "plan-direct-subtitle",
+                {"url": "https://cdn.example/subtitle.vtt", "headers": {}},
+                target,
+            )
+
+        proxy_handler.assert_called_once_with({})
+        opener.open.assert_called_once()
+        self.assertEqual(target.read_bytes(), b"WEBVTT\n")
 
     def test_download_only_uses_desktop_and_does_not_create_eagle_job(self) -> None:
         media_root = self.root / "download-only"
@@ -958,6 +984,52 @@ class MediaCoordinatorTests(unittest.TestCase):
             redact_media_url("https://cdn.example/a.mp4?token=secret#part"),
             "https://cdn.example/a.mp4",
         )
+
+    def test_ffmpeg_inputs_receive_the_selected_http_proxy(self) -> None:
+        arguments = self.coordinator._ffmpeg_input_arguments(
+            {
+                "url": "https://cdn.example/video.mp4",
+                "headers": {"referer": "https://www.behance.net/"},
+            },
+            "http://127.0.0.1:7890",
+        )
+        self.assertEqual(
+            arguments[:2], ["-http_proxy", "http://127.0.0.1:7890"]
+        )
+        self.assertIn("Referer: https://www.behance.net/\r\n", arguments)
+
+    def test_auto_proxy_route_fallback_runs_at_most_once(self) -> None:
+        with patch.object(self.coordinator, "schedule"):
+            plan = self.coordinator.create_plan(self.payload())
+        routes = [
+            ProxyRoute(
+                "http://127.0.0.1:7890", "windows", "auto", "系统代理 127.0.0.1:7890"
+            ),
+            ProxyRoute(None, "direct", "auto", "直连"),
+        ]
+        calls: list[str] = []
+
+        def process(_plan_id: str, route: ProxyRoute) -> None:
+            calls.append(route.source)
+            with self.database.session() as connection:
+                connection.execute(
+                    "UPDATE download_plans SET status = ? WHERE id = ?",
+                    ("downloading" if len(calls) == 1 else "completed_local", plan["id"]),
+                )
+            if len(calls) == 1:
+                raise MediaPlanError(
+                    "本机 FFmpeg 下载失败：Server returned 403 Forbidden",
+                    "desktop_download_failed",
+                )
+
+        with (
+            patch.object(self.coordinator.network_proxy, "routes_for", return_value=routes),
+            patch.object(self.coordinator, "_process_remote", side_effect=process),
+            patch.object(self.coordinator, "schedule"),
+        ):
+            self.coordinator._process_guarded(plan["id"])
+        self.assertEqual(calls, ["windows", "direct"])
+        self.assertEqual(self.coordinator.get_plan(plan["id"])["status"], "completed_local")
 
 
 if __name__ == "__main__":
