@@ -15,6 +15,7 @@ from idm_eagle_bridge.database import Database
 from idm_eagle_bridge.media import (
     MediaCoordinator,
     MediaPlanError,
+    canonical_page_resolver_url,
     redact_media_url,
     resolve_media_tool,
     safe_output_name,
@@ -343,6 +344,14 @@ class MediaCoordinatorTests(unittest.TestCase):
             self.coordinator.create_plan(self.payload(streams=[stream]))
         self.assertEqual(raised.exception.code, "invalid_page_resolver_url")
 
+    def test_douyin_modal_page_is_canonicalized_to_supported_video_permalink(self) -> None:
+        self.assertEqual(
+            canonical_page_resolver_url(
+                "https://www.douyin.com/jingxuan?modal_id=7662692425235828009&from_page=feed"
+            ),
+            "https://www.douyin.com/video/7662692425235828009",
+        )
+
     def test_youtube_resolver_uses_exact_quality_and_ephemeral_cookie_file(self) -> None:
         class FakeProcess:
             returncode = 0
@@ -464,6 +473,56 @@ class MediaCoordinatorTests(unittest.TestCase):
         self.assertFalse(cookie_path.exists(), "generic resolver cookies must be deleted immediately")
         self.assertEqual([stream["role"] for stream in streams], ["video", "audio"])
         self.assertTrue(all(stream["resolver"] == "" for stream in streams))
+
+    def test_douyin_page_resolver_canonicalizes_modal_url_before_process_start(self) -> None:
+        class FakeProcess:
+            returncode = 1
+
+            def communicate(self):
+                return ("", "ERROR: Unsupported URL: https://www.douyin.com/jingxuan")
+
+            def terminate(self):
+                self.returncode = 1
+
+        context = {
+            "url": "https://www.douyin.com/jingxuan?modal_id=7662692425235828009",
+            "resolver": "page",
+            "headers": {"user-agent": "Chrome/Test"},
+        }
+        with patch("idm_eagle_bridge.media.resolve_media_tool", side_effect=lambda name: self.root / f"{name}.exe"), patch(
+            "idm_eagle_bridge.media.subprocess.Popen", return_value=FakeProcess()
+        ) as popen, self.assertRaises(MediaPlanError) as raised:
+            self.coordinator._resolve_page_streams(
+                "plan-douyin-modal", context, self.root / "douyin-resolver-work"
+            )
+        self.assertEqual(popen.call_args.args[0][-1], "https://www.douyin.com/video/7662692425235828009")
+        self.assertEqual(raised.exception.code, "douyin_page_unsupported")
+        self.assertNotIn("https://", str(raised.exception))
+
+    def test_douyin_page_resolver_reports_expired_browser_session_separately(self) -> None:
+        class FakeProcess:
+            returncode = 1
+
+            def communicate(self):
+                return ("", "Fresh cookies (not necessarily logged in) are needed")
+
+            def terminate(self):
+                self.returncode = 1
+
+        with patch("idm_eagle_bridge.media.resolve_media_tool", side_effect=lambda name: self.root / f"{name}.exe"), patch(
+            "idm_eagle_bridge.media.subprocess.Popen", return_value=FakeProcess()
+        ), self.assertRaises(MediaPlanError) as raised:
+            self.coordinator._resolve_page_streams(
+                "plan-douyin-cookie",
+                {
+                    "url": "https://www.douyin.com/video/7662692425235828009",
+                    "resolver": "page",
+                    "headers": {"cookie": "sessionid=top-secret"},
+                },
+                self.root / "douyin-cookie-work",
+            )
+        self.assertEqual(raised.exception.code, "douyin_session_expired")
+        self.assertNotIn("top-secret", str(raised.exception))
 
     def test_desktop_downloads_direct_media_preserves_subtitle_and_queues_eagle(self) -> None:
         media_root = self.root / "direct"

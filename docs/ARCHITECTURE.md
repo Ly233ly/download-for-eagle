@@ -309,8 +309,86 @@ CDN bytestart/byteend ── 去偏移、保留签名 ── 技术后备
                           统一 FFmpeg → FFprobe → 本地/Eagle
 ```
 
-- `chooseContentPageUrl` 只接受同源稳定内容地址；路径/安全查询结构覆盖帖子、Reel、video/status/comments/pin、Watch `v` 和抖音 `modal_id`，不从普通主页猜测内容。
+- `chooseContentPageUrl` 只接受同源稳定内容地址；路径/安全查询结构覆盖帖子、Reel、video/status/comments/pin 和 Watch `v`，不从普通主页猜测内容。抖音 `modal_id` 自 1.2.4 起由当前主播放器适配器独立规范化。
 - `resolverRequestContextByTab` 只在 service worker 内存中按标签页和首方主机保存白名单请求头，主导航和标签关闭立即删除。计划 API 继续只在 `_remote_inputs` 保存完整上下文，数据库写脱敏 URL。
 - `MediaCoordinator._resolve_page_streams` 使用固定 yt-dlp/Deno 将一个内容页解析为一条完整视频或视频+音频；cookie 文件位于任务临时目录并在 `finally` 删除。解析结果进入既有 FFmpeg 状态机，不新增站点下载器。
 - `bytestart/byteend` 与其他固定区间先按通用传输分片判定。Instagram 的 `efg/xpv_asset_id` 只补充分轨归组、时长、码率和完整大小估算；删除偏移后的签名地址是后备，不改变下载职责边界。
 - 默认分区在同一标签页/来源域存在稳定页面解析候选时隐藏重建后备；技术分片开关仍可展示，便于诊断解析器不支持或会话失效场景。
+
+## 1.2.4 抖音当前主播放器适配
+
+```text
+精选页多个 video
+      │ 视口交集 + 播放状态 + 进度 + 面积
+      ▼
+唯一当前主播放器 ── 标题 / 当前帧 / 223.237 秒 / 尺寸
+      │
+      ├─ HTTP currentSrc ───────────────→ 统一本机 FFmpeg
+      │
+      └─ blob + 明确 modal_id
+                  │
+                  ▼
+       https://www.douyin.com/video/<id>
+                  │ resolver=page
+                  ▼
+             yt-dlp + Deno ─────────────→ 统一本机 FFmpeg
+```
+
+- 适配器只确定当前内容身份和可信入口，不新增抖音下载器、任务状态机、合并器或浏览器下载分支。
+- 屏外预加载播放器即使已就绪也不能成为当前候选；主播放器的 HTTP 地址优先于页面解析，避免把可直接下载的完整媒体退化为站点解析。
+- `/video/<id>` 与数字 `modal_id` 是唯一可接受的抖音页面身份。直接流和页面候选使用同一 `douyin:<videoId>`，无明确 ID 的 `/jingxuan` 不可提交。
+- 1.2.3 产生的旧无身份页面候选在 popup 归组前过滤；桌面仍兼容规范化带 `modal_id` 的同次运行旧任务，并把不支持地址与会话失效分开报告。
+
+## 1.2.5 抖音逐视频内容身份
+
+```text
+feed-item A ─ video_766... ─ @作者A + 文案A ─ douyin:766...
+feed-item B ─ video_765... ─ @作者B + 文案B ─ douyin:765...
+
+blob/MSE 原始请求 ── 无法精确绑定 video ID ──→ 技术分片（默认隐藏/不可提交）
+```
+
+- 当前项和页面已预载项都可以成为内容候选，但必须从各自最近的 `feed-item` 读取身份，不能读取全局 active 容器或标签页标题。
+- 适配器只产出内容身份、可信页面入口和展示元数据；每个候选仍走统一桌面解析、FFmpeg、FFprobe 与 Eagle 流程。
+- 无法精确绑定的底层请求保留诊断可见性，但不再作为完整视频；这避免用错误标题掩盖内容身份未知。
+
+## 1.2.6 通用信息流内容绑定
+
+```text
+最近内容容器 ── 同源永久链接 ── resolver=page 内容候选
+      │                 ├─ 自身标题/正文
+      │                 ├─ 自身 poster/当前帧
+      │                 └─ 自身时长
+      │
+      └─ blob/MSE 底层 HLS/DASH/音视频请求
+             │ 无法证明属于哪张内容卡片
+             ▼
+       未关联技术资源（默认隐藏、不可提交）
+```
+
+- `content-script.js` 对每个 blob/MSE 播放器只检查最近内容容器；永久链接仍由 `chooseContentPageUrl` 的同源结构规则确认，不读取浏览历史、不从主页猜内容 ID。
+- `selectContentTitle` 在容器内部按语义说明、标题、可读行和图片说明排序，过滤纯计数、播放器时间轴、相对时间与控件词。标签页标题只在容器没有任何有意义文本时作为最后回退。
+- `partitionGroups` 只在同一 `tabId + sourceDomain` 已存在 `resolver=page` 内容候选时降级孤立播放请求。若页面没有内容绑定替代项，完整清单仍保留在默认列表，避免通用规则误伤仅靠网络清单的网站。
+- 技术开关返回带 `technicalOnly` 标记的只读诊断组；UI 紧凑显示并由 `validateSelection` 返回 `unbound_playback`，批量选择也排除这些组。
+- service worker 的工具栏角标先 `groupCandidates` 再 `partitionGroups`，与 popup 的默认可见数量一致。
+
+## 1.2.7 通用信息流发现生命周期
+
+```text
+DOM 连续变化 ── 有界合并调度 ── 250 ms 内页面候选扫描
+
+popup 打开/刷新 ── 探测当前 HTTP(S) 标签内容脚本
+                         │
+              ┌──────────┴──────────┐
+              │已响应               │无接收端
+              ▼                     ▼
+           立即扫描       注入候选逻辑 + 内容脚本
+                                      │
+                                      ▼
+                                   立即扫描
+```
+
+- `createBoundedScheduler` 采用单个待执行任务合并连续变化；它不会像尾随防抖一样反复重置期限，因此高频信息流 DOM 更新不能饿死发现扫描。
+- 内容脚本启动时立即扫描，并响应 `discoverPageResolvers` 主动探测；网络请求仍只作媒体线索，页面候选不依赖下一条请求触发。
+- popup 在读取候选快照前调用 `ensureDiscovery`。后台先尝试消息探测，只有接收端不存在时才通过 `chrome.scripting` 向当前顶层 HTTP(S) 标签注入 `eagle-bridge-candidate-logic.js` 与 `content-script.js`。
+- 恢复只修复浏览器发现生命周期，不新增下载器、站点路由或跨标签注入；页面候选仍进入 1.2.6 的通用内容绑定与技术资源分区。

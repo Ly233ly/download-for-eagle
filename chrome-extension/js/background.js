@@ -249,7 +249,8 @@ async function captureVisibleVideoFrame(webInfo, frameId, visualContext) {
 
 function visibleMediaCount(items) {
     try {
-        return globalThis.EagleBridgeUILogic.groupCandidates(Array.isArray(items) ? items : []).length;
+        const groups = globalThis.EagleBridgeUILogic.groupCandidates(Array.isArray(items) ? items : []);
+        return globalThis.EagleBridgeUILogic.partitionGroups(groups).visible.length;
     } catch (_error) {
         return Array.isArray(items) ? items.length : 0;
     }
@@ -518,6 +519,9 @@ function findMedia(data, isRegex = false, filter = false, timer = false) {
         if (trustedVisualContext && Number.isFinite(Number(visualContext.duration)) && Number(visualContext.duration) > 0) info.duration = Number(visualContext.duration);
         if (trustedVisualContext && Number.isFinite(Number(visualContext.width)) && Number(visualContext.width) > 0) info.playerWidth = Number(visualContext.width);
         if (trustedVisualContext && Number.isFinite(Number(visualContext.height)) && Number(visualContext.height) > 0) info.playerHeight = Number(visualContext.height);
+        if (trustedVisualContext && typeof visualContext.title === "string" && visualContext.title.trim()) {
+            info.title = visualContext.title.trim().slice(0, 220);
+        }
         info.frameId = Number.isInteger(data.frameId) ? data.frameId : 0;
         if (data.mediaMeta && typeof data.mediaMeta === "object") {
             const meta = data.mediaMeta;
@@ -569,6 +573,15 @@ function findMedia(data, isRegex = false, filter = false, timer = false) {
         info.title = info.title || webInfo?.title || "NULL";
         info.favIconUrl = webInfo?.favIconUrl;
         info.webUrl = webInfo?.url;
+        try {
+            const pageHost = new URL(String(webInfo?.url || "")).hostname;
+            info.unboundDouyinMedia = /(^|\.)douyin\.com$/i.test(pageHost)
+                && !data.mediaMeta
+                && !trustedVisualContext
+                && /^(?:video|audio)\//i.test(String(info.type || ""));
+        } catch (_error) {
+            info.unboundDouyinMedia = false;
+        }
         await enrichManifestQualities(info);
         if (typeof eagleBridgeCandidate === "function") {
             eagleBridgeCandidate(info).catch(function () { return; });

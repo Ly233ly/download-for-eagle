@@ -71,17 +71,144 @@ if (presentation.chooseContentPageUrl("https://example.com/", []) !== "") {
 if (presentation.chooseContentPageUrl("https://x.com/user/status/123?tracking=1", []) !== "https://x.com/user/status/123") {
     throw new Error("A single-content page may safely use its own canonical URL for desktop resolution");
 }
+const genericFeedTitle = presentation.selectContentTitle({
+    headings: [],
+    captions: [],
+    lines: [
+        "alan酱",
+        "@alanshen144905",
+        "·",
+        "15小时",
+        "我单方面宣布，Joy-Con 才是 Voice Coding 的最佳神器，没有之一。",
+        "0:41 / 0:48",
+        "18",
+        "50",
+        "351",
+        "5.6万"
+    ],
+    imageAlts: ["alan酱的头像"],
+    fallback: "主页 / X"
+});
+if (genericFeedTitle !== "我单方面宣布，Joy-Con 才是 Voice Coding 的最佳神器，没有之一。") {
+    throw new Error(`A generic feed item must use its own meaningful caption instead of the tab title; got ${genericFeedTitle}`);
+}
+if (presentation.selectContentTitle({ lines: ["18", "0:41 / 0:48"], fallback: "主页 / X" }) !== "主页 / X") {
+    throw new Error("Pure counters and player timestamps must not replace the page-title fallback");
+}
+
+const scheduledCallbacks = [];
+let boundedScanCount = 0;
+const boundedSchedule = presentation.createBoundedScheduler(
+    () => { boundedScanCount += 1; },
+    250,
+    { setTimeout: callback => { scheduledCallbacks.push(callback); return scheduledCallbacks.length; } }
+);
+for (let index = 0; index < 100; index += 1) boundedSchedule();
+if (scheduledCallbacks.length !== 1) {
+    throw new Error("Continuous feed mutations must not postpone media discovery forever");
+}
+scheduledCallbacks.shift()();
+if (boundedScanCount !== 1) throw new Error("The bounded discovery scheduler must run the queued scan");
+boundedSchedule();
+if (scheduledCallbacks.length !== 1) throw new Error("A new scan must be schedulable after the previous scan completes");
+
+const injectionCalls = [];
+let discoveryMessageCount = 0;
+const recoveredDiscoveryPromise = presentation.ensureContentDiscovery({
+    tabs: {
+        sendMessage: async (_tabId, message) => {
+            discoveryMessageCount += 1;
+            if (discoveryMessageCount === 1) throw new Error("Receiving end does not exist");
+            return { ok: message.Message === "discoverPageResolvers" };
+        }
+    },
+    scripting: {
+        executeScript: async details => { injectionCalls.push(details); }
+    }
+}, { id: 42, url: "https://example.com/feed" }).then(recoveredDiscovery => {
+    if (!recoveredDiscovery?.ready || !recoveredDiscovery?.injected || injectionCalls.length !== 1) {
+        throw new Error("Opening the popup must recover discovery on a page left open across an extension reload");
+    }
+    if (injectionCalls[0]?.target?.tabId !== 42
+        || injectionCalls[0]?.files?.join(",") !== "js/eagle-bridge-candidate-logic.js,js/content-script.js") {
+        throw new Error("Recovery must inject only the active discovery scripts into the requested web tab");
+    }
+});
+const alreadyReadyInjectionCalls = [];
+const alreadyReadyDiscoveryPromise = presentation.ensureContentDiscovery({
+    tabs: { sendMessage: async () => ({ ok: true }) },
+    scripting: { executeScript: async details => { alreadyReadyInjectionCalls.push(details); } }
+}, { id: 43, url: "https://example.com/feed/two" }).then(result => {
+    if (!result?.ready || result?.injected || alreadyReadyInjectionCalls.length) {
+        throw new Error("A responsive content script must be scanned without duplicate injection");
+    }
+});
+const restrictedDiscoveryPromise = presentation.ensureContentDiscovery({
+    tabs: { sendMessage: async () => { throw new Error("must not be called"); } },
+    scripting: { executeScript: async () => { throw new Error("must not be called"); } }
+}, { id: 44, url: "chrome://extensions" }).then(result => {
+    if (result?.ready || result?.injected || result?.reason !== "unsupported_tab") {
+        throw new Error("Restricted browser pages must never receive discovery injection");
+    }
+});
 const genericPermalinkMatrix = [
     ["https://www.tiktok.com/@creator/video/7523401234567890123?lang=en", "https://www.tiktok.com/@creator/video/7523401234567890123"],
     ["https://www.reddit.com/r/videos/comments/abc123/a_title/?utm_source=share", "https://www.reddit.com/r/videos/comments/abc123/a_title"],
     ["https://www.facebook.com/watch/?v=123456789012345", "https://www.facebook.com/watch?v=123456789012345"],
-    ["https://www.douyin.com/jingxuan?modal_id=7523401234567890123&from_page=feed", "https://www.douyin.com/jingxuan?modal_id=7523401234567890123"],
+    ["https://www.douyin.com/jingxuan?modal_id=7523401234567890123&from_page=feed", "https://www.douyin.com/video/7523401234567890123"],
     ["https://www.pinterest.com/pin/123456789012345678/", "https://www.pinterest.com/pin/123456789012345678"],
     ["https://www.instagram.com/stories/creator/12345678901234567/?utm_source=ig_story_item_share", "https://www.instagram.com/stories/creator/12345678901234567"]
 ];
 for (const [input, expected] of genericPermalinkMatrix) {
     const actual = presentation.chooseContentPageUrl(input, []);
     if (actual !== expected) throw new Error(`Generic permalink matrix failed: ${input} -> ${actual}`);
+}
+
+const liveDouyinPrimaryIndex = presentation.selectPrimaryPageVideo([
+    {
+        duration: 223.237007,
+        currentTime: 114.837846,
+        paused: true,
+        readyState: 4,
+        rect: { x: 0, y: 0, width: 1920, height: 808 }
+    },
+    {
+        duration: 49.041,
+        currentTime: 0,
+        paused: true,
+        readyState: 4,
+        rect: { x: 0, y: 856, width: 1920, height: 808 }
+    }
+], { width: 1920, height: 808 });
+if (liveDouyinPrimaryIndex !== 0) {
+    throw new Error(`Douyin must select the visible 3:43 player instead of the offscreen 0:49 preload; got ${liveDouyinPrimaryIndex}`);
+}
+
+const douyinFeedItems = [
+    {
+        className: "NhEiLku8 video_7662692425235828009 sliderVideo",
+        nickname: " @热话动漫 ",
+        description: "这一集的瑞克，终于不像个疯子，像个外公 #动漫解说 展开"
+    },
+    {
+        className: "NhEiLku8 video_7653805516250025262 sliderVideo",
+        nickname: "@木板解说",
+        description: "第7集：深度拆解瑞克和莫蒂 S6E4《夜晚家庭》 展开"
+    }
+].map(item => ({
+    id: presentation.douyinVideoIdFromSignals([item.className]),
+    title: presentation.douyinCandidateTitle(item.nickname, item.description)
+}));
+if (douyinFeedItems[0].id !== "7662692425235828009"
+    || douyinFeedItems[1].id !== "7653805516250025262") {
+    throw new Error("Each Douyin feed item must keep its own explicit video identity");
+}
+if (douyinFeedItems[0].title !== "@热话动漫 · 这一集的瑞克，终于不像个疯子，像个外公 #动漫解说"
+    || douyinFeedItems[1].title !== "@木板解说 · 第7集：深度拆解瑞克和莫蒂 S6E4《夜晚家庭》") {
+    throw new Error("Each Douyin feed item must use its own author and lower-left caption instead of the tab title");
+}
+if (new Set(douyinFeedItems.map(item => item.title)).size !== 2) {
+    throw new Error("Different Douyin videos must never collapse to one tab title");
 }
 
 const douyinPlayers = [
@@ -197,6 +324,7 @@ const grouped = ui.groupCandidates([
 if (grouped.length !== 1) throw new Error("Toolbar count must use the same grouped-content model as the popup");
 
 (async () => {
+    await Promise.all([recoveredDiscoveryPromise, alreadyReadyDiscoveryPromise, restrictedDiscoveryPromise]);
     let ready = false;
     let snapshot = { init: true };
     setTimeout(() => {

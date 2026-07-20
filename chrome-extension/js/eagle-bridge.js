@@ -153,6 +153,15 @@ async function eagleBridgeCurrentTab() {
     return tab;
 }
 
+async function eagleBridgeEnsureDiscovery(tabId) {
+    const normalizedTabId = Number(tabId);
+    if (!Number.isInteger(normalizedTabId) || normalizedTabId < 0) {
+        return { ready: false, injected: false, reason: "invalid_tab" };
+    }
+    const tab = await chrome.tabs.get(normalizedTabId);
+    return EagleBridgeCandidateLogic.ensureContentDiscovery(chrome, tab);
+}
+
 async function eagleBridgeExplicitSource(eventType) {
     const tab = await eagleBridgeCurrentTab();
     return eagleBridgeQueueSourceEvent({
@@ -358,7 +367,7 @@ async function eagleBridgeCreatePlan(items, options = {}) {
     }
     const first = items[0];
     const payload = {
-        pageUrl: String(first.webUrl || first.initiator || ""),
+        pageUrl: String(first.resolver === "page" ? first.url : (first.webUrl || first.initiator || "")),
         pageTitle: String(first._title || first.title || ""),
         thumbnailUrl: String(first.thumbnailUrl || ""),
         outputName: String(options.outputName || first.downFileName || first.name || first.title || "media"),
@@ -437,6 +446,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
             case "currentTab":
                 return eagleBridgeCurrentTab();
+            case "ensureDiscovery":
+                return eagleBridgeEnsureDiscovery(message.tabId);
             case "sourceClick":
                 return eagleBridgeSourceClick(message.event || {}, sender.tab);
             case "manualSource":

@@ -77,6 +77,25 @@ def redact_media_url(value: Any) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))[:2048]
 
 
+def canonical_page_resolver_url(value: Any) -> str:
+    raw = _safe_text(value, 8192)
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return raw
+    hostname = (parsed.hostname or "").lower()
+    if hostname == "douyin.com" or hostname.endswith(".douyin.com"):
+        path_match = re.fullmatch(r"/video/(\d{10,30})/?", parsed.path)
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        modal_id = str(query.get("modal_id") or "")
+        video_id = path_match.group(1) if path_match else (
+            modal_id if re.fullmatch(r"\d{10,30}", modal_id) else ""
+        )
+        if video_id:
+            return f"https://www.douyin.com/video/{video_id}"
+    return raw
+
+
 def _is_fixed_byte_range_url(value: str, size: int | None = None) -> bool:
     """Return True when the URL itself identifies one byte slice, not a file."""
 
@@ -162,7 +181,7 @@ def resolve_media_tool(name: str) -> Path:
         if resolved.is_file():
             return resolved
     raise MediaPlanError(
-        f"未找到 {name}。请修复 1.2.3 媒体工具安装后重试。",
+        f"未找到 {name}。请修复 1.2.5 媒体工具安装后重试。",
         f"{name}_missing",
     )
 
@@ -940,7 +959,7 @@ class MediaCoordinator:
         context: dict[str, Any],
         plan_root: Path,
     ) -> list[dict[str, Any]]:
-        url = str(context.get("url") or "")
+        url = canonical_page_resolver_url(context.get("url"))
         parsed = urlsplit(url)
         hostname = (parsed.hostname or "").lower()
         if parsed.scheme not in {"http", "https"} or not hostname:
@@ -1007,7 +1026,19 @@ class MediaCoordinator:
         if stopped:
             raise MediaPlanError("任务已由用户停止", "canceled")
         if process is None or process.returncode != 0:
-            safe_error = re.sub(r"https?://\S+", "[媒体地址]", _safe_text(stderr, 500)).strip()
+            raw_error = _safe_text(stderr, 500).strip()
+            if hostname == "douyin.com" or hostname.endswith(".douyin.com"):
+                if "Unsupported URL" in raw_error:
+                    raise MediaPlanError(
+                        "抖音内容页不是受支持的视频详情地址，请刷新当前视频后重试",
+                        "douyin_page_unsupported",
+                    )
+                if "Fresh cookies" in raw_error or "cookies" in raw_error.lower():
+                    raise MediaPlanError(
+                        "抖音需要当前浏览器的新鲜会话，请刷新抖音页面后重试",
+                        "douyin_session_expired",
+                    )
+            safe_error = re.sub(r"https?://\S+", "[媒体地址]", raw_error).strip()
             raise MediaPlanError(
                 "页面媒体解析失败：" + (safe_error or "请刷新内容页面后重试"),
                 "page_resolve_failed",

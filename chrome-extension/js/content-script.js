@@ -124,8 +124,22 @@
         }
         const duration = Number(selected?.video?.duration);
         const selectedSource = selected?.sources?.[0] || selected?.video?.currentSrc || location.href;
-        const groupKey = selected ? logic.stableVisualKey(selectedSource, selected.ordinal, duration) : "";
+        const selectedDouyinItem = selected?.video?.closest?.('[data-e2e="feed-item"]');
+        const selectedDouyinRoot = selected?.video?.closest?.('[data-e2e="feed-active-video"], [data-e2e="feed-video"], [class*="video_"]');
+        const selectedDouyinVideoId = logic.douyinVideoIdFromSignals?.([
+            selectedDouyinRoot?.getAttribute?.("data-aweme-id"),
+            selectedDouyinRoot?.getAttribute?.("data-video-id"),
+            selectedDouyinRoot?.className,
+            selectedDouyinItem?.getAttribute?.("data-aweme-id"),
+            selectedDouyinItem?.getAttribute?.("data-video-id"),
+            selectedDouyinRoot?.matches?.('[data-e2e="feed-active-video"]') ? location.href : ""
+        ]) || "";
+        const groupKey = selected
+            ? (selectedDouyinVideoId ? `douyin:${selectedDouyinVideoId}` : logic.stableVisualKey(selectedSource, selected.ordinal, duration))
+            : "";
         const rect = selected?.video?.getBoundingClientRect?.();
+        const selectedContainer = selected?.video?.closest?.("article, [role='article'], [role='dialog'], figure")
+            || selected?.video?.parentElement;
         const captureRect = rect && rect.width >= 48 && rect.height >= 27
             && rect.bottom > 0 && rect.right > 0 && rect.top < innerHeight && rect.left < innerWidth
             ? {
@@ -144,6 +158,7 @@
             duration: Number.isFinite(duration) && duration > 0 ? duration : 0,
             width: Number(selected?.video?.videoWidth) || 0,
             height: Number(selected?.video?.videoHeight) || 0,
+            title: selected ? pageResolverTitle(selected.video, selectedContainer) : "",
             captureRect,
             visualMatch: visualMatch.kind
         };
@@ -178,7 +193,7 @@
     var _structuredCatalogSent = new Set();
     var _structuredCatalogObserver = null;
     var _pageResolverSent = new Set();
-    var _pageResolverTimer = null;
+    var _pageResolverSchedule = null;
 
     function discoverStructuredPlayerMedia() {
         if (location.hostname !== "player.vimeo.com") return false;
@@ -235,10 +250,37 @@
     }
 
     function pageResolverTitle(video, container) {
-        const heading = container?.querySelector?.('h1, h2, h3, [role="heading"]');
-        const image = container?.querySelector?.('img[alt]');
-        return String(heading?.textContent || image?.getAttribute?.("alt") || document.title || "网页视频")
-            .replace(/\s+/g, " ").trim().slice(0, 220) || "网页视频";
+        if (/(^|\.)douyin\.com$/i.test(location.hostname)) {
+            const item = video.closest('[data-e2e="feed-item"]');
+            const root = video.closest('[data-e2e="feed-active-video"], [data-e2e="feed-video"], [class*="video_"]');
+            const videoId = globalThis.EagleBridgeCandidateLogic.douyinVideoIdFromSignals?.([
+                root?.getAttribute?.("data-aweme-id"), root?.getAttribute?.("data-video-id"), root?.className,
+                item?.getAttribute?.("data-aweme-id"), item?.getAttribute?.("data-video-id"),
+                root?.matches?.('[data-e2e="feed-active-video"]') ? location.href : ""
+            ]) || "";
+            const nickname = item?.querySelector?.('[data-e2e="feed-video-nickname"]')?.textContent || "";
+            const description = item?.querySelector?.('[data-e2e="video-desc"]')?.textContent || "";
+            return globalThis.EagleBridgeCandidateLogic.douyinCandidateTitle?.(nickname, description, videoId)
+                || (videoId ? `抖音视频 ${videoId}` : "抖音视频");
+        }
+        const textValues = selector => Array.from(container?.querySelectorAll?.(selector) || [], element =>
+            element.getAttribute?.("content") || element.getAttribute?.("aria-label") || element.textContent || ""
+        ).slice(0, 24);
+        const captions = textValues([
+            "figcaption", "[itemprop='caption']", "[itemprop='description']",
+            "[itemprop='headline']", "[aria-description]"
+        ].join(","));
+        const headings = textValues("h1, h2, h3, [role='heading'], [itemprop='name']");
+        const lines = String(container?.innerText || container?.textContent || "")
+            .split(/[\r\n]+/).map(value => value.trim()).filter(Boolean).slice(0, 60);
+        const imageAlts = Array.from(container?.querySelectorAll?.("img[alt]") || [], image => image.getAttribute("alt") || "").slice(0, 12);
+        return globalThis.EagleBridgeCandidateLogic.selectContentTitle?.({
+            captions,
+            headings,
+            lines,
+            imageAlts,
+            fallback: document.title || "网页视频"
+        }) || String(document.title || "网页视频").slice(0, 220);
     }
 
     function discoverPageResolvers() {
@@ -248,45 +290,89 @@
         const structuredHost = /(^|\.)(?:youtube\.com|bilibili\.com|player\.vimeo\.com)$/i.test(location.hostname);
         if (structuredHost) return;
         const videos = Array.from(document.querySelectorAll("video")).slice(0, 32);
-        for (const video of videos) {
+        const douyinHost = /(^|\.)douyin\.com$/i.test(location.hostname);
+        const douyinPrimaryIndex = douyinHost && logic.selectPrimaryPageVideo
+            ? logic.selectPrimaryPageVideo(videos.map(video => {
+                const rect = video.getBoundingClientRect();
+                return {
+                    duration: Number(video.duration) || 0,
+                    currentTime: Number(video.currentTime) || 0,
+                    paused: video.paused,
+                    ended: video.ended,
+                    readyState: video.readyState,
+                    rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+                };
+            }), { width: innerWidth, height: innerHeight })
+            : -1;
+        for (const [videoIndex, video] of videos.entries()) {
             const sources = videoSources(video);
-            if (sources.some(source => /^https?:\/\//i.test(source))) continue;
-            if (!sources.some(source => source.startsWith("blob:")) || video.readyState < 2) continue;
-            const container = video.closest("article, [role='article'], [role='dialog'], figure") || video.parentElement;
+            const hasDirectSource = sources.some(source => /^https?:\/\//i.test(source));
+            const hasBlobSource = sources.some(source => source.startsWith("blob:"));
+            if (!douyinHost && hasDirectSource) continue;
+            if ((!hasBlobSource && !(douyinHost && hasDirectSource)) || video.readyState < 2) continue;
+            const douyinItem = douyinHost ? video.closest('[data-e2e="feed-item"]') : null;
+            const douyinRoot = douyinHost
+                ? video.closest('[data-e2e="feed-active-video"], [data-e2e="feed-video"], [class*="video_"]')
+                : null;
+            const explicitDouyinVideoId = douyinHost && logic.douyinVideoIdFromSignals
+                ? logic.douyinVideoIdFromSignals([
+                    douyinRoot?.getAttribute?.("data-aweme-id"), douyinRoot?.getAttribute?.("data-video-id"), douyinRoot?.className,
+                    douyinItem?.getAttribute?.("data-aweme-id"), douyinItem?.getAttribute?.("data-video-id"),
+                    videoIndex === douyinPrimaryIndex ? location.href : ""
+                ])
+                : "";
+            if (douyinHost && !explicitDouyinVideoId) continue;
+            const container = douyinItem
+                || video.closest("article, [role='article'], [role='dialog'], figure")
+                || video.parentElement;
             const links = Array.from(container?.querySelectorAll?.("a[href]") || [], link => link.href).slice(0, 64);
-            const pageUrl = logic.chooseContentPageUrl(location.href, links);
+            const pageUrl = explicitDouyinVideoId
+                ? `https://www.douyin.com/video/${explicitDouyinVideoId}`
+                : logic.chooseContentPageUrl(location.href, links);
             if (!pageUrl || _pageResolverSent.has(pageUrl)) continue;
             const duration = Number(video.duration);
-            const groupKey = `page:${logic.stableVisualKey(pageUrl, 0, duration)}`;
+            const douyinVideoId = explicitDouyinVideoId || pageUrl.match(/\/video\/(\d+)$/)?.[1] || "";
+            const groupKey = douyinVideoId
+                ? `douyin:${douyinVideoId}`
+                : `page:${logic.stableVisualKey(pageUrl, 0, duration)}`;
             const frameDataUrl = captureVideoFrame(video);
             const thumbnailUrl = videoArtwork(video) || backgroundArtwork(video);
+            const directSource = hasDirectSource
+                ? sources.find(source => /^https?:\/\//i.test(source)) || ""
+                : "";
+            const usesDirectDouyinStream = douyinHost && Boolean(directSource);
+            const isCurrentDouyinVideo = douyinHost && videoIndex === douyinPrimaryIndex;
             _pageResolverSent.add(pageUrl);
             chrome.runtime.sendMessage({
                 Message: "addMedia",
-                url: pageUrl,
+                url: usesDirectDouyinStream ? directSource : pageUrl,
                 href: location.href,
                 extraExt: "mp4",
                 mime: "video/mp4",
-                requestId: `page-resolver-${groupKey}`,
+                requestId: `${usesDirectDouyinStream ? "douyin-direct" : "page-resolver"}-${groupKey}`,
                 requestHeaders: {
                     referer: location.href,
                     origin: location.origin,
                     "user-agent": navigator.userAgent
                 },
                 mediaMeta: {
-                    resolver: "page",
+                    resolver: usesDirectDouyinStream ? "" : "page",
                     role: "video",
                     streamId: groupKey,
                     title: pageResolverTitle(video, container),
-                    label: "最佳可用",
+                    label: usesDirectDouyinStream
+                        ? `${Number(video.videoHeight) > 0 ? `${Number(video.videoHeight)}p · ` : ""}${isCurrentDouyinVideo ? "当前播放" : "页面已加载"}`
+                        : `${isCurrentDouyinVideo ? "当前播放" : "页面已加载"} · 最佳可用`,
                     width: Number(video.videoWidth) || 0,
                     height: Number(video.videoHeight) || 0,
                     duration: Number.isFinite(duration) && duration > 0 ? duration : 0,
                     thumbnailUrl,
                     frameDataUrl,
                     groupKey,
-                    qualitySource: "desktop_page_resolver",
-                    separateAv: true,
+                    qualitySource: usesDirectDouyinStream
+                        ? (isCurrentDouyinVideo ? "douyin_current_player" : "douyin_feed_player")
+                        : "desktop_page_resolver",
+                    separateAv: !usesDirectDouyinStream,
                     drm: false
                 }
             }, () => { void chrome.runtime.lastError; });
@@ -294,13 +380,28 @@
     }
 
     function schedulePageResolverDiscovery() {
-        clearTimeout(_pageResolverTimer);
-        _pageResolverTimer = setTimeout(discoverPageResolvers, 250);
+        const logic = globalThis.EagleBridgeCandidateLogic;
+        if (!_pageResolverSchedule) {
+            _pageResolverSchedule = logic?.createBoundedScheduler
+                ? logic.createBoundedScheduler(discoverPageResolvers, 250)
+                : (() => {
+                    let pending = false;
+                    return () => {
+                        if (pending) return;
+                        pending = true;
+                        setTimeout(() => {
+                            pending = false;
+                            discoverPageResolvers();
+                        }, 250);
+                    };
+                })();
+        }
+        _pageResolverSchedule();
     }
 
     function startPageResolverDiscovery() {
         if (window.top !== window) return;
-        schedulePageResolverDiscovery();
+        discoverPageResolvers();
         document.addEventListener("play", schedulePageResolverDiscovery, true);
         document.addEventListener("loadedmetadata", schedulePageResolverDiscovery, true);
         const observer = new MutationObserver(schedulePageResolverDiscovery);
@@ -325,6 +426,11 @@
         }
         if (Message.Message == "getEmbeddingFrameRect") {
             sendResponse(embeddingFrameRect(Message.frameUrl));
+            return true;
+        }
+        if (Message.Message == "discoverPageResolvers") {
+            discoverPageResolvers();
+            sendResponse({ ok: true });
             return true;
         }
     });

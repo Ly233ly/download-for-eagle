@@ -147,6 +147,7 @@
             qualitySource: cleanText(item?.qualitySource, 40),
             resolver: cleanText(item?.resolver, 40).toLowerCase(),
             reconstructedRange: Boolean(item?.reconstructedRange),
+            unboundDouyinMedia: Boolean(item?.unboundDouyinMedia),
             // A site favicon identifies the website, not the video. Keep it
             // separate so presentation code can fall back to a page frame
             // instead of showing the same logo for every captured item.
@@ -159,6 +160,14 @@
             sourceDomain: domainOf(pageUrl || item?.initiator || url),
             scope: cleanText(item?.__scope, 20) || "current"
         };
+    }
+
+    function isSupportedPageResolverCandidate(candidate) {
+        if (candidate?.resolver !== "page") return true;
+        let url;
+        try { url = new URL(candidate.url); } catch (_error) { return false; }
+        if (!/(^|\.)douyin\.com$/i.test(url.hostname)) return true;
+        return /^\/video\/\d{10,30}\/?$/i.test(url.pathname);
     }
 
     function manifestIdentity(candidate) {
@@ -257,14 +266,15 @@
     }
 
     function isTransportSegment(candidate) {
-        return !candidate.explicitRole
+        return candidate.unboundDouyinMedia
+            || (!candidate.explicitRole
             && (TRANSPORT_SEGMENT_EXTENSIONS.has(candidate.extension)
                 || fixedByteRange(candidate)
                 || (!candidate.groupKey
                     && ["video", "audio"].includes(candidate.kind)
                     && candidate.size > 0
                     && candidate.size < 128 * 1024
-                    && candidate.duration <= 0));
+                    && candidate.duration <= 0)));
     }
 
     function stableMediaPath(candidate) {
@@ -408,7 +418,7 @@
         const output = [];
         (Array.isArray(rawCandidates) ? rawCandidates : []).forEach((raw, index) => {
             const candidate = normalizeCandidate(raw, index);
-            if (!candidate.url) return;
+            if (!candidate.url || !isSupportedPageResolverCandidate(candidate)) return;
             if (query && ![
                 candidate.title, candidate.name, candidate.extension, candidate.type,
                 candidate.label, candidate.codec, candidate.language, candidate.sourceDomain
@@ -436,7 +446,7 @@
         const seen = new Map();
         (Array.isArray(rawCandidates) ? rawCandidates : []).forEach((raw, index) => {
             const candidate = normalizeCandidate(raw, index);
-            if (!candidate.url || seen.has(candidate.id)) return;
+            if (!candidate.url || !isSupportedPageResolverCandidate(candidate) || seen.has(candidate.id)) return;
             seen.set(candidate.id, candidate);
         });
         const candidates = [...seen.values()];
@@ -475,11 +485,27 @@
         const resolverScopes = new Set(all
             .filter(group => group?.resolvers?.some(item => item.resolver === "page"))
             .map(group => `${group.tabId ?? 0}:${group.sourceDomain || "page"}`));
-        const hidden = group => Boolean(group?.segmentOnly)
-            || Boolean(group?.fallbackOnly && resolverScopes.has(`${group.tabId ?? 0}:${group.sourceDomain || "page"}`));
+        const resolverInScope = group => resolverScopes.has(`${group?.tabId ?? 0}:${group?.sourceDomain || "page"}`);
+        const unboundPlayback = group => Boolean(group
+            && resolverInScope(group)
+            && group.confidence === "isolated"
+            && !group.resolvers?.length
+            && group.items?.length
+            && group.items.every(item => ["video", "audio", "hls", "dash"].includes(item.kind)));
+        const technicalReason = group => group?.segmentOnly ? "segment"
+            : group?.fallbackOnly && resolverInScope(group) ? "fallback"
+                : unboundPlayback(group) ? "unbound_playback" : "";
+        const hidden = group => Boolean(technicalReason(group));
         const hiddenSegmentCount = showSegments ? 0 : all.filter(hidden).length;
         return {
-            visible: showSegments ? [...all] : all.filter(group => !hidden(group)),
+            visible: showSegments
+                ? all.map(group => {
+                    const reason = technicalReason(group);
+                    return reason && reason !== "segment"
+                        ? { ...group, technicalOnly: true, technicalReason: reason }
+                        : group;
+                })
+                : all.filter(group => !hidden(group)),
             hiddenSegmentCount
         };
     }
@@ -592,6 +618,7 @@
         if (!group) return { ok: false, code: "no_group", message: "请选择一个媒体内容" };
         if (group.drm) return { ok: false, code: "blocked_drm", message: "检测到 DRM 保护，无法下载或合并" };
         if (group.segmentOnly) return { ok: false, code: "segment_only", message: "当前只捕获到播放分片，请继续播放片刻或使用增强捕获查找完整媒体清单" };
+        if (group.technicalOnly) return { ok: false, code: "unbound_playback", message: "该播放资源无法可靠关联到页面中的某个视频；请使用同页带标题和预览的内容候选" };
         const items = selectedCandidates(group, selection);
         if (!items.length) return { ok: false, code: "empty", message: "请选择要下载的版本" };
         if (items.some(item => !item.url)) return { ok: false, code: "invalid_url", message: "所选媒体地址无效" };
@@ -607,6 +634,7 @@
         }
         if (selection.mode === "resolver" && (items.length !== 1
             || !["youtube", "page"].includes(items[0].resolver)
+            || !isSupportedPageResolverCandidate(items[0])
             || (items[0].resolver === "youtube" && !selection.quality))) {
             return { ok: false, code: "invalid_resolver", message: "请选择可用的 YouTube 视频画质" };
         }
@@ -777,6 +805,7 @@
         kindCode,
         isManifest,
         normalizeCandidate,
+        isSupportedPageResolverCandidate,
         isSafeFilterRegex,
         filterCandidates,
         groupCandidates,

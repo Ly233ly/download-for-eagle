@@ -9,7 +9,7 @@ Set-StrictMode -Version Latest
 
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 if ([string]::IsNullOrWhiteSpace($PackageRoot)) {
-    $PackageRoot = Join-Path $projectRoot "release\下载中转站-1.2.3-Windows-x64\下载中转站-1.2.3"
+    $PackageRoot = Join-Path $projectRoot "release\下载中转站-1.2.7-Windows-x64\下载中转站-1.2.7"
 }
 $PackageRoot = [IO.Path]::GetFullPath($PackageRoot)
 $backend = Join-Path $PackageRoot "app\runtime\下载中转站后台\下载中转站后台.exe"
@@ -28,6 +28,10 @@ $env:IDM_EAGLE_DOWNLOAD_ROOT = $downloadRoot
 $env:IDM_EAGLE_DISABLE_AUTO_START = "1"
 $process = $null
 try {
+    $existingListener = Get-NetTCPConnection -LocalAddress "127.0.0.1" -LocalPort 47652 -State Listen -ErrorAction SilentlyContinue
+    if ($null -ne $existingListener) {
+        throw "端口 47652 已有助手运行；请先正常退出已安装版本，避免误把其他进程当作待测构建。"
+    }
     try {
         Invoke-RestMethod -Uri "http://127.0.0.1:47652/health" -TimeoutSec 1 | Out-Null
         throw "端口 47652 已有助手运行；请先正常退出已安装版本，避免误把其他进程当作待测构建。"
@@ -48,9 +52,14 @@ try {
     }
     if ($null -eq $health) { throw "冻结后端未在 20 秒内通过健康检查。" }
     if ($process.HasExited) { throw "待测冻结后端已提前退出，健康响应不属于该进程。" }
-    if ([string]$health.version -ne "1.2.3" -or [int]$health.extensionProtocol -ne 1 -or [int]$health.databaseSchema -ne 5 -or -not [bool]$health.mediaReady -or -not [bool]$health.youtubeResolverReady -or [string]$health.downloadEngine -ne "desktop_ffmpeg") {
+    $listener = Get-NetTCPConnection -LocalAddress "127.0.0.1" -LocalPort 47652 -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -eq $listener -or [int]$listener.OwningProcess -ne [int]$process.Id) {
+        throw "端口 47652 的健康响应不属于待测冻结后端进程。"
+    }
+    if ([string]$health.version -ne "1.2.7" -or [int]$health.extensionProtocol -ne 1 -or [int]$health.databaseSchema -ne 5 -or -not [bool]$health.mediaReady -or -not [bool]$health.youtubeResolverReady -or [string]$health.downloadEngine -ne "desktop_ffmpeg") {
         $healthSummary = $health | ConvertTo-Json -Compress
-        throw "冻结后端健康门字段不符合 1.2.3 要求：$healthSummary"
+        throw "冻结后端健康门字段不符合 1.2.7 要求：$healthSummary"
     }
 
     $quotedSample = '"' + $sample.Replace('"', '\"') + '"'
@@ -64,7 +73,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $jobCount -ne 1) { throw "冻结接收模式未持久化唯一任务。" }
 
     $evidence = [ordered]@{
-        version = "1.2.3"
+        version = "1.2.7"
         testedAtUtc = [DateTime]::UtcNow.ToString("o")
         backend = "app/runtime/下载中转站后台/下载中转站后台.exe"
         processName = $process.ProcessName
@@ -82,7 +91,7 @@ try {
         denoBundled = (Test-Path -LiteralPath (Join-Path $PackageRoot "app\media-tools\deno.exe"))
     }
     if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
-        $EvidencePath = Join-Path $scratchRoot "frozen-runtime-1.2.3-evidence.json"
+        $EvidencePath = Join-Path $scratchRoot "frozen-runtime-1.2.7-evidence.json"
     }
     $evidence | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $EvidencePath -Encoding UTF8
     $evidence | ConvertTo-Json -Depth 4

@@ -28,10 +28,10 @@
 - DRM 阻断、敏感字段最小化、临时文件归属和签名升级/回滚约束；
 - 下载中转站名称、图标、版本和安装器集成。
 
-1.2.3 活动扩展仍包含从历史 GPL 工作继续修改的后台网络捕获与内容适配文件，因此不能撤销 GPL 义务或删除本记录。新增 YouTube 主世界格式适配器与通用内容页解析桥由本项目独立实现，不复制站点或 IDM 代码，也不改变既有许可义务。`third_party/cat-catch/source/` 是对应源码/审计归档，不会由浏览器清单加载；当前运行时文件清单由 `manifest.json`、`popup.html` 和安装器清理门禁共同限定。
+1.2.7 活动扩展仍包含从历史 GPL 工作继续修改的后台网络捕获与内容适配文件，因此不能撤销 GPL 义务或删除本记录。新增 YouTube 主世界格式适配器、通用内容页解析桥、信息流内容绑定/发现生命周期与抖音当前播放器/逐视频标题适配器由本项目独立实现，不复制站点或 IDM 代码，也不改变既有许可义务。`third_party/cat-catch/source/` 是对应源码/审计归档，不会由浏览器清单加载；当前运行时文件清单由 `manifest.json`、`popup.html` 和安装器清理门禁共同限定。
 
 ## YouTube 桌面解析工具
 
-1.2.3 固定使用 yt-dlp 2026.06.09 Windows x64 官方发行可执行文件与 Deno 2.8.1 Windows x64 官方运行时；同一受控运行时同时承担 YouTube 准确画质和通用内容页解析，不增加逐站二进制下载器。下载地址、压缩包/二进制 SHA-256 和复现脚本记录在 `packaging/Fetch-YouTube-Resolver.ps1` 与 `media-tools/YOUTUBE-RESOLVER-VERSION.json`。yt-dlp 对应源代码发行包固定归档在 `third_party/yt-dlp/yt-dlp-2026.06.09-source.tar.gz`；Unlicense、yt-dlp 可执行文件的第三方许可总表和 Deno MIT 许可证随发行物提供。
+1.2.7 固定使用 yt-dlp 2026.06.09 Windows x64 官方发行可执行文件与 Deno 2.8.1 Windows x64 官方运行时；同一受控运行时同时承担 YouTube 准确画质和通用内容页解析，不增加逐站二进制下载器。信息流绑定和发现恢复只从页面已有 DOM 容器选择内容身份与展示元数据，抖音适配器只选择/标识页面已有播放器、提取各自公开标题并规范化明确内容 ID，均不引入额外下载工具。下载地址、压缩包/二进制 SHA-256 和复现脚本记录在 `packaging/Fetch-YouTube-Resolver.ps1` 与 `media-tools/YOUTUBE-RESOLVER-VERSION.json`。yt-dlp 对应源代码发行包固定归档在 `third_party/yt-dlp/yt-dlp-2026.06.09-source.tar.gz`；Unlicense、yt-dlp 可执行文件的第三方许可总表和 Deno MIT 许可证随发行物提供。
 
 任何继续同步上游的提交都必须在本文件追加固定提交、日期和冲突处理说明。

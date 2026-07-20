@@ -7,9 +7,9 @@
 - Chrome 扩展为 Manifest V3；Eagle 只通过官方本地 Web API 访问。
 - 发行后端使用 PyInstaller 6.21.0 `onedir` 打包，包含 Python 3.14.4 和 Tcl/Tk。
 
-## 1.2.3 实现边界
+## 1.2.7 实现边界
 
-1.0.0 曾按 [cat-catch 迁移总计划](docs/CAT_CATCH_MIGRATION_PLAN.md) 和 [功能对照矩阵](docs/FEATURE_PARITY_MATRIX.md) 完成研究与迁移。固定上游源码保存在 `third_party/cat-catch/source/` 作为 GPL 对应源码；1.2.3 活动浏览器载荷不再复制完整上游工具箱。YouTube MSE/SABR 页面由 `youtube-content.js` 注入主世界适配器读取播放器格式目录；通用 blob 页面从最近内容容器提供稳定永久链接。两者都只负责发现和提交；无直链候选由桌面固定 yt-dlp/Deno 解析，FFmpeg 继续执行实际下载。
+1.0.0 曾按 [cat-catch 迁移总计划](docs/CAT_CATCH_MIGRATION_PLAN.md) 和 [功能对照矩阵](docs/FEATURE_PARITY_MATRIX.md) 完成研究与迁移。固定上游源码保存在 `third_party/cat-catch/source/` 作为 GPL 对应源码；1.2.7 活动浏览器载荷不再复制完整上游工具箱。YouTube MSE/SABR 页面由 `youtube-content.js` 注入主世界适配器读取播放器格式目录；通用 blob/MSE 页面从每个播放器最近内容容器提供稳定永久链接、标题与预览，同页无法关联具体内容的播放请求只进入技术区。信息流扫描使用不可饿死的合并调度，popup 会恢复扩展重载后保持打开页面的发现脚本。浏览器只负责发现和提交；无直链候选由桌面固定 yt-dlp/Deno 解析，FFmpeg 继续执行实际下载。
 
 - 浏览器捕获层只负责发现资源、形成媒体候选组、展示选择并经认证回环接口提交计划；专用 bridge 不调用 `chrome.downloads`。
 - 本机后端负责所有普通直链、分轨、HLS/DASH 下载，以及持久状态、FFmpeg/ffprobe、输出验证和现有 Eagle 导入。
@@ -32,7 +32,7 @@
 
 ## 验证
 
-把 `src` 加入 `PYTHONPATH` 后运行 `python -m unittest discover -s tests -p "test_*.py" -v`。当前 102 项测试覆盖原有后端/安装/安全能力，以及候选归组、默认隐藏播放分片、最新项定位、强身份与预览、SABR 全画质目录、`bytestart/byteend` 重建、跨站内容永久链接矩阵、桌面页面解析、长登录 Cookie 和临时文件清理、统一下载、任务恢复、`completed_local` 补导 Eagle、旧浏览器工具载荷删除和 GPL 来源归档。另运行 `node tests/js/test_youtube.js`、`node tests/js/test_popup_logic.js`、`node tests/js/test_candidate_presentation.js` 与 `node tests/js/test_auth_race.js` 验证 YouTube 格式目录、候选、页面链接和认证纯逻辑。
+把 `src` 加入 `PYTHONPATH` 后运行 `python -m unittest discover -s tests -p "test_*.py" -v`。当前 105 项 Python 测试覆盖原有后端/安装/安全能力，以及候选归组、默认隐藏播放分片、信息流内容绑定/未关联资源降噪、最新项定位、强身份与预览、SABR 全画质目录、`bytestart/byteend` 重建、跨站内容永久链接矩阵、桌面页面解析、长登录 Cookie 和临时文件清理、统一下载、任务恢复、`completed_local` 补导 Eagle、旧浏览器工具载荷删除和 GPL 来源归档。另运行 `node tests/js/test_youtube.js`、`node tests/js/test_popup_logic.js`、`node tests/js/test_candidate_presentation.js`、`node tests/js/test_auth_race.js` 与 `node tests/js/test_bilibili.js` 验证 YouTube/B 站格式目录、候选、页面链接、信息流分区和认证纯逻辑。
 
 扩展的 JavaScript 使用 `node --check` 检查；`manifest.json` 需通过 JSON 解析。`constants.py`、`pyproject.toml`、扩展清单、弹窗版本、托盘菜单和安装器版本必须同步。
 
@@ -40,7 +40,7 @@
 
 ## 发行结构
 
-`release/下载中转站-1.2.3-Windows-x64/下载中转站-1.2.3` 包含：
+`release/下载中转站-1.2.7-Windows-x64/下载中转站-1.2.7` 包含：
 
 - `一键安装.exe`：接收者唯一需要运行的入口；
 - `app/`：安装器载荷，包括两个 C# 启动器、Chrome/Firefox 扩展、FFmpeg/ffprobe、yt-dlp/Deno 和独立后端；

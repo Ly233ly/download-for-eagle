@@ -135,15 +135,88 @@
         };
     }
 
+    function canonicalDouyinVideoUrl(value) {
+        let url;
+        try { url = new URL(String(value || "")); } catch (_error) { return ""; }
+        if (!/(^|\.)douyin\.com$/i.test(url.hostname)) return "";
+        const pathId = url.pathname.match(/^\/video\/(\d{10,30})(?:\/|$)/i)?.[1] || "";
+        const modalId = url.searchParams.get("modal_id") || "";
+        const videoId = pathId || (/^\d{10,30}$/.test(modalId) ? modalId : "");
+        return videoId ? `https://www.douyin.com/video/${videoId}` : "";
+    }
+
+    function douyinVideoIdFromSignals(values) {
+        for (const value of Array.isArray(values) ? values : []) {
+            const text = String(value || "").trim();
+            if (!text) continue;
+            const canonical = canonicalDouyinVideoUrl(text);
+            const canonicalId = canonical.match(/\/video\/(\d{10,30})$/)?.[1] || "";
+            if (canonicalId) return canonicalId;
+            if (/^\d{10,30}$/.test(text)) return text;
+            const classId = text.match(/(?:^|\s)video_(\d{10,30})(?=\s|$)/)?.[1] || "";
+            if (classId) return classId;
+        }
+        return "";
+    }
+
+    function douyinCandidateTitle(nickname, description, videoId = "") {
+        const clean = value => String(value || "")
+            .replace(/展开\s*$/i, "")
+            .replace(/\s+/g, " ")
+            .trim();
+        const title = [clean(nickname), clean(description)].filter(Boolean).join(" · ");
+        if (title) return title.slice(0, 220);
+        const explicitId = /^\d{10,30}$/.test(String(videoId || "")) ? String(videoId) : "";
+        return explicitId ? `抖音视频 ${explicitId}` : "抖音视频";
+    }
+
+    function selectPrimaryPageVideo(players, viewport = {}) {
+        const viewportWidth = Math.max(0, Number(viewport.width) || 0);
+        const viewportHeight = Math.max(0, Number(viewport.height) || 0);
+        let bestIndex = -1;
+        let bestScore = -1;
+        (Array.isArray(players) ? players : []).forEach((player, index) => {
+            const rect = player?.rect || {};
+            const x = Number(rect.x) || 0;
+            const y = Number(rect.y) || 0;
+            const width = Math.max(0, Number(rect.width ?? rect.w) || 0);
+            const height = Math.max(0, Number(rect.height ?? rect.h) || 0);
+            const readyState = Number(player?.readyState) || 0;
+            const duration = Number(player?.duration) || 0;
+            if (readyState < 2 || duration <= 0 || width <= 0 || height <= 0) return;
+            const visibleWidth = viewportWidth > 0
+                ? Math.max(0, Math.min(x + width, viewportWidth) - Math.max(x, 0))
+                : width;
+            const visibleHeight = viewportHeight > 0
+                ? Math.max(0, Math.min(y + height, viewportHeight) - Math.max(y, 0))
+                : height;
+            const visibleArea = visibleWidth * visibleHeight;
+            if (visibleArea <= 0) return;
+            const playing = player?.paused === false && player?.ended !== true;
+            const hasProgress = Number(player?.currentTime) > 0.05;
+            const score = (playing ? 4e12 : 0)
+                + (hasProgress ? 2e12 : 0)
+                + visibleArea * 1000
+                + Math.min(width * height, 1e9)
+                + Math.min(duration, 86400);
+            if (score > bestScore) {
+                bestScore = score;
+                bestIndex = index;
+            }
+        });
+        return bestIndex;
+    }
+
     function chooseContentPageUrl(currentValue, linkValues) {
         let current;
         try { current = new URL(String(currentValue || "")); } catch (_error) { return ""; }
         if (!["http:", "https:"].includes(current.protocol)) return "";
+        const currentDouyin = canonicalDouyinVideoUrl(current.href);
+        if (currentDouyin) return currentDouyin;
         const safeContentQuery = url => {
             const rules = [
                 ["v", /^\/watch\/?$/i],
                 ["video_id", /^\/(?:watch|video|videos)\/?$/i],
-                ["modal_id", /^\/(?:jingxuan|discover)\/?$/i],
                 ["story_fbid", /^\/(?:watch|video|videos|[^/]+)\/?$/i]
             ];
             for (const [name, pathRule] of rules) {
@@ -175,12 +248,96 @@
             || Boolean(safeContentQuery(url));
         const currentCanonical = canonical(current.href);
         if (currentCanonical && isContentUrl(currentCanonical)) return currentCanonical.href;
+        const linkedDouyin = (Array.isArray(linkValues) ? linkValues : [])
+            .map(canonicalDouyinVideoUrl)
+            .find(Boolean);
+        if (linkedDouyin) return linkedDouyin;
         const candidates = [...new Set((Array.isArray(linkValues) ? linkValues : [])
             .map(canonical)
             .filter(url => url && isContentUrl(url))
             .map(url => url.href))];
         candidates.sort((left, right) => new URL(left).pathname.length - new URL(right).pathname.length || left.localeCompare(right));
         return candidates[0] || "";
+    }
+
+    function selectContentTitle(signals = {}) {
+        const fallback = String(signals.fallback || "").replace(/\s+/g, " ").trim().slice(0, 220);
+        const noisyExact = /^(?:显示更多|展开|收起|播放|暂停|重播|静音|取消静音|全屏|退出全屏|more|show more|play|pause|replay|mute|unmute|fullscreen)$/i;
+        const metric = /^(?:\d{1,2}:\d{2}(?:\s*\/\s*\d{1,2}:\d{2})?|\d+(?:[.,]\d+)?(?:万|亿|[kmb])?|[·•…]+)$/i;
+        const relativeTime = /^\d+\s*(?:秒|分钟|小时|天|周|个月|月|年|seconds?|minutes?|hours?|days?|weeks?|months?|years?)(?:前)?$/i;
+        const normalize = value => String(value || "")
+            .replace(/\s+/g, " ")
+            .replace(/\s*(?:显示更多|展开|show more)\s*$/i, "")
+            .trim()
+            .slice(0, 220);
+        const meaningful = value => {
+            if (!value || value.length < 2 || noisyExact.test(value) || metric.test(value) || relativeTime.test(value)) return false;
+            if (/^@[a-z0-9_.-]{2,80}$/i.test(value)) return false;
+            return /[\p{L}\p{N}]/u.test(value);
+        };
+        const collections = [
+            [signals.captions, 4_000],
+            [signals.headings, 3_000],
+            [signals.lines, 2_000],
+            [signals.imageAlts, 1_000]
+        ];
+        let selected = "";
+        let selectedScore = -1;
+        for (const [values, base] of collections) {
+            for (const raw of Array.isArray(values) ? values : []) {
+                const value = normalize(raw);
+                if (!meaningful(value)) continue;
+                const words = (value.match(/[\p{L}\p{N}]+/gu) || []).length;
+                const score = base + Math.min(value.length, 160) * 8 + Math.min(words, 24) * 15;
+                if (score > selectedScore) {
+                    selected = value;
+                    selectedScore = score;
+                }
+            }
+        }
+        return selected || fallback || "网页视频";
+    }
+
+    function createBoundedScheduler(callback, delayMs = 250, timers = globalThis) {
+        let timerId = null;
+        const delay = Math.max(0, Number(delayMs) || 0);
+        return function schedule() {
+            if (timerId !== null) return false;
+            timerId = timers.setTimeout(() => {
+                timerId = null;
+                callback();
+            }, delay);
+            return true;
+        };
+    }
+
+    async function ensureContentDiscovery(chromeApi, tab) {
+        const tabId = Number(tab?.id);
+        const tabUrl = String(tab?.url || "");
+        if (!Number.isInteger(tabId) || tabId < 0 || !/^https?:\/\//i.test(tabUrl)) {
+            return { ready: false, injected: false, reason: "unsupported_tab" };
+        }
+        const scan = async () => {
+            try {
+                const response = await chromeApi.tabs.sendMessage(tabId, { Message: "discoverPageResolvers" });
+                return Boolean(response?.ok);
+            } catch (_error) {
+                return false;
+            }
+        };
+        if (await scan()) return { ready: true, injected: false };
+        if (!chromeApi?.scripting?.executeScript) {
+            return { ready: false, injected: false, reason: "scripting_unavailable" };
+        }
+        try {
+            await chromeApi.scripting.executeScript({
+                target: { tabId, allFrames: false },
+                files: ["js/eagle-bridge-candidate-logic.js", "js/content-script.js"]
+            });
+        } catch (_error) {
+            return { ready: false, injected: false, reason: "injection_failed" };
+        }
+        return { ready: await scan(), injected: true };
     }
 
     function parseManifestQualities(source, kind = "") {
@@ -277,7 +434,14 @@
         resolveVisualMatch,
         reconstructByteRangeUrl,
         parseInstagramCdnMetadata,
+        canonicalDouyinVideoUrl,
+        douyinVideoIdFromSignals,
+        douyinCandidateTitle,
+        selectPrimaryPageVideo,
         chooseContentPageUrl,
+        selectContentTitle,
+        createBoundedScheduler,
+        ensureContentDiscovery,
         parseManifestQualities,
         parseVimeoPlayerConfig,
         selectThumbnail,

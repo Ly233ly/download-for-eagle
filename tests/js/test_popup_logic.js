@@ -199,6 +199,74 @@ function candidate(overrides = {}) {
 }
 
 {
+    const staleDouyinResolver = candidate({
+        requestId: "stale-douyin-jingxuan-resolver",
+        url: "https://www.douyin.com/jingxuan",
+        webUrl: "https://www.douyin.com/jingxuan?modal_id=7662692425235828009",
+        title: "抖音精选电脑版",
+        groupKey: "page:stale-douyin-player",
+        resolver: "page",
+        role: "video",
+        duration: 49.041
+    });
+    assert.deepStrictEqual(
+        logic.groupCandidates([staleDouyinResolver]),
+        [],
+        "an old unsupported Douyin feed resolver must disappear instead of remaining retryable after extension reload"
+    );
+}
+
+{
+    const unboundNetworkCandidate = candidate({
+        requestId: "douyin-unbound-network",
+        url: "https://v95-web-sz.douyinvod.com/raw/preload.mp4?token=signed",
+        webUrl: "https://www.douyin.com/jingxuan?modal_id=7662692425235828009",
+        title: "标签页标题 - 抖音",
+        groupKey: "",
+        role: undefined,
+        ext: "mp4",
+        type: "video/mp4",
+        estimatedSize: 18_100_000,
+        duration: 223.234,
+        unboundDouyinMedia: true
+    });
+    const groups = logic.groupCandidates([unboundNetworkCandidate]);
+    assert.strictEqual(groups.length, 1);
+    assert.strictEqual(groups[0].segmentOnly, true, "an unbound Douyin network request must stay in the technical-fragment partition");
+    assert.strictEqual(logic.partitionGroups(groups).visible.length, 0, "an unbound request must not appear as a fake video named after the tab");
+}
+
+{
+    const distinctDouyinItems = logic.groupCandidates([
+        candidate({
+            requestId: "douyin-current-7662692425235828009",
+            url: "https://www.douyin.com/video/7662692425235828009",
+            webUrl: "https://www.douyin.com/jingxuan?modal_id=7662692425235828009",
+            title: "@热话动漫 · 这一集的瑞克，终于不像个疯子，像个外公",
+            groupKey: "douyin:7662692425235828009",
+            resolver: "page",
+            role: "video",
+            duration: 223.234
+        }),
+        candidate({
+            requestId: "douyin-feed-7653805516250025262",
+            url: "https://www.douyin.com/video/7653805516250025262",
+            webUrl: "https://www.douyin.com/jingxuan?modal_id=7662692425235828009",
+            title: "@木板解说 · 第7集：深度拆解瑞克和莫蒂 S6E4",
+            groupKey: "douyin:7653805516250025262",
+            resolver: "page",
+            role: "video",
+            duration: 532.9
+        })
+    ]);
+    assert.strictEqual(distinctDouyinItems.length, 2, "different explicit Douyin video IDs must remain separate content groups");
+    assert.deepStrictEqual(distinctDouyinItems.map(group => group.title).sort(), [
+        "@热话动漫 · 这一集的瑞克，终于不像个疯子，像个外公",
+        "@木板解说 · 第7集：深度拆解瑞克和莫蒂 S6E4"
+    ].sort());
+}
+
+{
     const reconstructedFallback = candidate({
         requestId: "instagram-reconstructed-track",
         webUrl: "https://www.instagram.com/",
@@ -226,6 +294,64 @@ function candidate(overrides = {}) {
     assert.deepStrictEqual(partitioned.visible.map(group => group.title), ["真实帖子视频"], "a stable page resolver must replace reconstructed transport fallbacks in the default list");
     assert.strictEqual(partitioned.hiddenSegmentCount, 1, "the fallback stays available through the technical-fragment disclosure");
     assert.strictEqual(logic.partitionGroups(groups, { showSegments: true }).visible.length, 2);
+}
+
+{
+    const pageResolvers = [
+        ["2078821500099125405", "我单方面宣布，Joy-Con 才是 Voice Coding 的最佳神器，没有之一。", 47.647],
+        ["2078673094940745759", "28 个真实可跑项目！AI Agent 实战圣经开源", 25.966],
+        ["2078466405369102834", "看完汗毛直立，提问和回答的水平都是超一流的", 3485.936]
+    ].map(([id, title, duration], index) => candidate({
+        requestId: `page-resolver-${id}`,
+        url: `https://x.com/creator/status/${id}`,
+        webUrl: "https://x.com/home",
+        title,
+        groupKey: `page:player-${id}`,
+        streamId: `page:player-${id}`,
+        resolver: "page",
+        role: "video",
+        duration,
+        thumbnailUrl: `https://images.example/${id}.jpg`,
+        getTime: 1_000 + index
+    }));
+    const unboundPlayback = Array.from({ length: 12 }, (_, index) => candidate({
+        requestId: `unbound-hls-${index}`,
+        url: `https://video-cdn-${index % 3}.example/playback/${index}/master.m3u8?token=${index}`,
+        webUrl: "https://x.com/home",
+        title: "主页 / X",
+        groupKey: "",
+        role: undefined,
+        duration: 0,
+        ext: "m3u8",
+        type: "application/vnd.apple.mpegurl",
+        getTime: 2_000 + index
+    }));
+    const groups = logic.groupCandidates([...pageResolvers, ...unboundPlayback]);
+    assert.strictEqual(groups.length, 15, "the raw capture still keeps auditable network resources before presentation partitioning");
+
+    const defaultView = logic.partitionGroups(groups);
+    assert.deepStrictEqual(
+        defaultView.visible.map(group => group.title),
+        pageResolvers.map(item => item.title),
+        "content-bound page candidates must replace ambiguous playback manifests in the default list"
+    );
+    assert.strictEqual(defaultView.hiddenSegmentCount, 12, "every unbound playback resource must leave the default information path");
+
+    const diagnosticView = logic.partitionGroups(groups, { showSegments: true });
+    const technical = diagnosticView.visible.filter(group => group.technicalOnly);
+    assert.strictEqual(technical.length, 12, "the disclosure keeps ambiguous resources available as compact technical diagnostics");
+    assert.strictEqual(
+        logic.validateSelection(technical[0], logic.createDefaultSelection(technical[0]), { paired: true }).code,
+        "unbound_playback",
+        "an ambiguous playback URL must not create a download for the wrong page video"
+    );
+
+    const manifestWithoutBoundContent = logic.groupCandidates([unboundPlayback[0]]);
+    assert.strictEqual(
+        logic.partitionGroups(manifestWithoutBoundContent).visible.length,
+        1,
+        "a site without a content-bound alternative must keep its only complete manifest usable"
+    );
 }
 
 {

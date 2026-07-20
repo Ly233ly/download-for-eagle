@@ -32,9 +32,9 @@
         batch: "批量", exitBatch: "退出批量", batchTitle: "批量操作", batchBody: "每个内容会创建独立任务，不会把不同视频的音轨混在一起。",
         batchSelected: "已选择 {count} 个内容", selectAll: "全选", invert: "反选", copySelected: "复制链接", batchImport: "批量下载并导入", batchDownload: "批量仅下载",
         mediaType: "媒体类型", allTypes: "全部类型", otherType: "其他资源", extensionFilter: "扩展名（可用逗号分隔）", minimumSize: "最小大小（MB）",
-        urlRegex: "网址正则", unsafeRegex: "正则表达式无效或可能造成卡顿，已停止应用。", hideDuplicateNames: "隐藏同名重复资源", showSegments: "显示不可下载的播放分片", hiddenSegments: "已隐藏 {count} 个播放分片",
+        urlRegex: "网址正则", unsafeRegex: "正则表达式无效或可能造成卡顿，已停止应用。", hideDuplicateNames: "隐藏同名重复资源", showSegments: "显示未关联资源与播放分片", hiddenSegments: "已隐藏 {count} 个未关联播放资源",
         batchPartial: "已启动 {count} 个任务，另有任务失败。", actualFrame: "当前视频画面",
-        outputLocation: "保存位置：{path}", openFolder: "打开所在文件夹", folderOpened: "已打开下载文件夹", importExisting: "导入已有文件", importQueued: "已加入 Eagle 导入队列", segmentOnlyTitle: "不可直接下载的播放分片", syncInterrupted: "任务状态同步中断；本机下载仍可能继续，正在自动重连。"
+        outputLocation: "保存位置：{path}", openFolder: "打开所在文件夹", folderOpened: "已打开下载文件夹", importExisting: "导入已有文件", importQueued: "已加入 Eagle 导入队列", segmentOnlyTitle: "无法确认归属的播放资源", syncInterrupted: "任务状态同步中断；本机下载仍可能继续，正在自动重连。"
     };
     const zhHant = {
         product: "下載中轉站", media: "媒體", tasks: "任務", refresh: "重新整理", settings: "設定",
@@ -46,7 +46,7 @@
         batch: "批次", exitBatch: "退出批次", batchTitle: "批次操作", batchSelected: "已選擇 {count} 個內容", selectAll: "全選", invert: "反選",
         batchImport: "批次下載並匯入", batchDownload: "批次僅下載", mediaType: "媒體類型", allTypes: "全部類型", otherType: "其他資源",
         activeTaskCount: "{active} 個進行中，共 {count} 個任務", taskCount: "共 {count} 個任務",
-        qualityCountLabel: "影片品質（本影片 {count} 檔）", qualitySourceHint: "檔位來自目前影片；其他影片會依來源網站實際提供的品質變化。", showSegments: "顯示不可下載的播放分片", hiddenSegments: "已隱藏 {count} 個播放分片", importExisting: "匯入現有檔案", importQueued: "已加入 Eagle 匯入佇列", segmentOnlyTitle: "不可直接下載的播放分片"
+        qualityCountLabel: "影片品質（本影片 {count} 檔）", qualitySourceHint: "檔位來自目前影片；其他影片會依來源網站實際提供的品質變化。", showSegments: "顯示未關聯資源與播放分片", hiddenSegments: "已隱藏 {count} 個未關聯播放資源", importExisting: "匯入現有檔案", importQueued: "已加入 Eagle 匯入佇列", segmentOnlyTitle: "無法確認歸屬的播放資源"
     };
     const en = {
         product: "Download Transfer Station", media: "Media", tasks: "Tasks", refresh: "Refresh", settings: "Settings",
@@ -72,9 +72,9 @@
         batch: "Batch", exitBatch: "Exit batch", batchTitle: "Batch actions", batchBody: "Each content item creates its own task; tracks from different videos are never mixed.",
         batchSelected: "{count} items selected", selectAll: "Select all", invert: "Invert", copySelected: "Copy links", batchImport: "Download and import all", batchDownload: "Download all only",
         mediaType: "Media type", allTypes: "All types", otherType: "Other", extensionFilter: "Extensions (comma-separated)", minimumSize: "Minimum size (MB)",
-        urlRegex: "URL regular expression", unsafeRegex: "This expression is invalid or potentially unsafe and was not applied.", hideDuplicateNames: "Hide duplicate filenames", showSegments: "Show non-downloadable playback fragments", hiddenSegments: "{count} playback fragments hidden",
+        urlRegex: "URL regular expression", unsafeRegex: "This expression is invalid or potentially unsafe and was not applied.", hideDuplicateNames: "Hide duplicate filenames", showSegments: "Show unbound resources and playback fragments", hiddenSegments: "{count} unbound playback resources hidden",
         batchPartial: "Started {count} tasks; one or more failed.",
-        outputLocation: "Saved to: {path}", openFolder: "Open folder", folderOpened: "Download folder opened", importExisting: "Import existing file", importQueued: "Queued for Eagle import", segmentOnlyTitle: "Non-downloadable playback fragment", syncInterrupted: "Task sync was interrupted. The desktop download may still continue; reconnecting automatically."
+        outputLocation: "Saved to: {path}", openFolder: "Open folder", folderOpened: "Download folder opened", importExisting: "Import existing file", importQueued: "Queued for Eagle import", segmentOnlyTitle: "Playback resource with unknown ownership", syncInterrupted: "Task sync was interrupted. The desktop download may still continue; reconnecting automatically."
     };
 
     const uiLanguage = String(chrome.i18n?.getUILanguage?.() || "zh-CN").toLowerCase();
@@ -310,7 +310,9 @@
             state.selections.set(group.id, selection);
             if (!state.drafts.has(group.id)) state.drafts.set(group.id, { outputName: logic.defaultOutputName(group, selection) });
         }
-        state.selectedGroupIds = new Set([...state.selectedGroupIds].filter(id => state.groups.some(group => group.id === id)));
+        state.selectedGroupIds = new Set([...state.selectedGroupIds].filter(id => state.groups.some(group => (
+            group.id === id && !group.segmentOnly && !group.technicalOnly
+        ))));
         state.activeGroupId = followLatest
             ? logic.defaultActiveGroupId(state.groups, "")
             : logic.defaultActiveGroupId(state.groups, previousId);
@@ -343,11 +345,12 @@
             const duration = logic.formatDuration(group.duration);
             const itemCount = group.items.length;
             const selected = state.batchMode ? state.selectedGroupIds.has(group.id) : group.id === state.activeGroupId;
-            return `<div class="bridge-group-item${group.segmentOnly ? " bridge-segment-only" : ""}" data-batch="${state.batchMode}">
-                ${state.batchMode ? `<label class="bridge-batch-check" title="${escapeHtml(t("batchSelected", { count: state.selectedGroupIds.size }))}"><input type="checkbox" data-batch-group="${escapeHtml(group.id)}" ${selected ? "checked" : ""}><span class="bridge-visually-hidden">${escapeHtml(group.title)}</span></label>` : ""}
+            const technical = Boolean(group.segmentOnly || group.technicalOnly);
+            return `<div class="bridge-group-item${technical ? " bridge-segment-only" : ""}" data-batch="${state.batchMode}">
+                ${state.batchMode ? `<label class="bridge-batch-check" title="${escapeHtml(t("batchSelected", { count: state.selectedGroupIds.size }))}"><input type="checkbox" data-batch-group="${escapeHtml(group.id)}" ${selected ? "checked" : ""} ${technical ? "disabled" : ""}><span class="bridge-visually-hidden">${escapeHtml(group.title)}</span></label>` : ""}
                 <button class="bridge-group-row" data-group-id="${escapeHtml(group.id)}" role="option" aria-current="${group.id === state.activeGroupId}" aria-selected="${selected}">
                 <span class="bridge-thumb-wrap">
-                    ${group.segmentOnly ? `<span class="bridge-segment-glyph">分片</span>` : mediaPreviewMarkup(group, selection, "bridge-thumb")}
+                    ${technical ? `<span class="bridge-segment-glyph">技术</span>` : mediaPreviewMarkup(group, selection, "bridge-thumb")}
                     ${duration ? `<span class="bridge-duration">${escapeHtml(duration)}</span>` : ""}
                 </span>
                 <span class="bridge-group-copy">
@@ -385,9 +388,9 @@
         const selection = state.selections.get(group.id);
         const draft = state.drafts.get(group.id) || { outputName: logic.defaultOutputName(group, selection) };
         const validation = logic.validateSelection(group, selection, { paired: state.paired, importToEagle: true });
-        if (group.segmentOnly) {
+        if (group.segmentOnly || group.technicalOnly) {
             inspector.innerHTML = `<div class="bridge-segment-inspector" role="status">
-                <div class="bridge-segment-glyph">分片</div>
+                <div class="bridge-segment-glyph">技术</div>
                 <div><h2>${escapeHtml(t("segmentOnlyTitle"))}</h2><p>${escapeHtml(validation.message)}</p></div>
             </div>`;
             return;
@@ -666,8 +669,9 @@
     }
 
     function setBatchSelection(mode) {
-        if (mode === "select-all") state.selectedGroupIds = new Set(state.groups.map(group => group.id));
-        else if (mode === "invert") state.selectedGroupIds = new Set(state.groups.filter(group => !state.selectedGroupIds.has(group.id)).map(group => group.id));
+        const selectable = state.groups.filter(group => !group.segmentOnly && !group.technicalOnly);
+        if (mode === "select-all") state.selectedGroupIds = new Set(selectable.map(group => group.id));
+        else if (mode === "invert") state.selectedGroupIds = new Set(selectable.filter(group => !state.selectedGroupIds.has(group.id)).map(group => group.id));
         renderSidebar();
         renderInspector();
     }
@@ -874,6 +878,7 @@
         try {
             await refreshTab();
             patchHeader();
+            await send({ eagleBridge: "ensureDiscovery", tabId: state.tab?.id }).catch(() => undefined);
             await refreshConnection();
             await Promise.allSettled([refreshCandidates(), refreshPlans(), refreshSite(), refreshToolState()]);
             renderSettings();
@@ -1009,6 +1014,8 @@
         if (groupButton) {
             if (state.batchMode) {
                 const id = groupButton.dataset.groupId;
+                const group = state.groups.find(candidateGroup => candidateGroup.id === id);
+                if (!group || group.segmentOnly || group.technicalOnly) return;
                 state.selectedGroupIds.has(id) ? state.selectedGroupIds.delete(id) : state.selectedGroupIds.add(id);
             } else state.activeGroupId = groupButton.dataset.groupId;
             renderSidebar();
