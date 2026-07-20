@@ -467,7 +467,11 @@ class MediaCoordinatorTests(unittest.TestCase):
                 "plan-page", context, self.root / "page-resolver-work"
             )
         command = popen.call_args.args[0]
-        self.assertIn("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]", command)
+        selector = command[command.index("--format") + 1]
+        self.assertTrue(selector.startswith("bestvideo[ext=mp4]+bestaudio[ext=m4a]/"))
+        self.assertIn("bestvideo[ext=mp4]+bestaudio[ext=mp4]", selector)
+        self.assertIn("bestvideo[ext=mp4]+bestaudio", selector)
+        self.assertTrue(selector.endswith("/best"))
         self.assertNotIn("top-secret", " ".join(str(value) for value in command))
         cookie_path = Path(command[command.index("--cookies") + 1])
         self.assertFalse(cookie_path.exists(), "generic resolver cookies must be deleted immediately")

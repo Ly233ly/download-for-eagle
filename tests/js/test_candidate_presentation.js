@@ -164,6 +164,25 @@ for (const [input, expected] of genericPermalinkMatrix) {
     if (actual !== expected) throw new Error(`Generic permalink matrix failed: ${input} -> ${actual}`);
 }
 
+const vimeoStructuredPage = presentation.chooseStructuredVideoPageUrl(
+    "https://vimeo.com/746646949?fl=pl&fe=vl",
+    {
+        ogType: "video.other",
+        twitterCard: "player",
+        canonicalUrl: "https://vimeo.com/746646949",
+        playerUrl: "https://player.vimeo.com/video/746646949?h=727f6a2632"
+    }
+);
+if (vimeoStructuredPage !== "https://vimeo.com/746646949") {
+    throw new Error(`Structured video metadata must expose the canonical Vimeo content page; got ${vimeoStructuredPage}`);
+}
+if (presentation.chooseStructuredVideoPageUrl("https://example.com/", {
+    ogType: "website",
+    twitterCard: "summary"
+}) !== "") {
+    throw new Error("A generic home page without explicit video metadata must not become a resolver candidate");
+}
+
 const liveDouyinPrimaryIndex = presentation.selectPrimaryPageVideo([
     {
         duration: 223.237007,

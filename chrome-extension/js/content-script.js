@@ -59,6 +59,61 @@
         return values.map(absoluteImageUrl).filter(Boolean);
     }
 
+    function metadataContent(selector) {
+        const element = document.querySelector(selector);
+        return String(element?.getAttribute?.("content") || element?.getAttribute?.("href") || "").trim();
+    }
+
+    function discoverStructuredPageResolver(logic) {
+        const pageUrl = logic?.chooseStructuredVideoPageUrl?.(location.href, {
+            ogType: metadataContent('meta[property="og:type"]'),
+            twitterCard: metadataContent('meta[name="twitter:card"]'),
+            canonicalUrl: metadataContent('meta[property="og:url"], link[rel="canonical"]'),
+            playerUrl: metadataContent('meta[name="twitter:player"]'),
+            videoUrl: metadataContent('meta[property="og:video"], meta[property="og:video:url"], meta[property="og:video:secure_url"]')
+        }) || "";
+        if (!pageUrl || _pageResolverSent.has(pageUrl)) return false;
+        const duration = Number(metadataContent('meta[property="video:duration"], meta[property="og:video:duration"]')) || 0;
+        const width = Number(metadataContent('meta[property="og:video:width"]')) || 0;
+        const height = Number(metadataContent('meta[property="og:video:height"]')) || 0;
+        const groupKey = `page:${logic.stableVisualKey(pageUrl, 0, duration)}`;
+        const title = metadataContent('meta[property="og:title"], meta[name="twitter:title"]')
+            || String(document.title || "网页视频").slice(0, 220);
+        const thumbnailUrl = absoluteImageUrl(metadataContent(
+            'meta[property="og:image"], meta[property="og:image:secure_url"], meta[name="twitter:image"]'
+        ));
+        _pageResolverSent.add(pageUrl);
+        chrome.runtime.sendMessage({
+            Message: "addMedia",
+            url: pageUrl,
+            href: location.href,
+            extraExt: "mp4",
+            mime: "video/mp4",
+            requestId: `page-resolver-metadata-${groupKey}`,
+            requestHeaders: {
+                referer: location.href,
+                origin: location.origin,
+                "user-agent": navigator.userAgent
+            },
+            mediaMeta: {
+                resolver: "page",
+                role: "video",
+                streamId: groupKey,
+                title: title.slice(0, 220),
+                label: "页面视频 · 最佳可用",
+                width,
+                height,
+                duration,
+                thumbnailUrl,
+                groupKey,
+                qualitySource: "structured_page_metadata",
+                separateAv: true,
+                drm: false
+            }
+        }, () => { void chrome.runtime.lastError; });
+        return true;
+    }
+
     function captureVideoFrame(video) {
         const logic = globalThis.EagleBridgeCandidateLogic;
         if (!logic || !video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return "";
@@ -289,6 +344,7 @@
         if (!logic?.chooseContentPageUrl) return;
         const structuredHost = /(^|\.)(?:youtube\.com|bilibili\.com|player\.vimeo\.com)$/i.test(location.hostname);
         if (structuredHost) return;
+        discoverStructuredPageResolver(logic);
         const videos = Array.from(document.querySelectorAll("video")).slice(0, 32);
         const douyinHost = /(^|\.)douyin\.com$/i.test(location.hostname);
         const douyinPrimaryIndex = douyinHost && logic.selectPrimaryPageVideo

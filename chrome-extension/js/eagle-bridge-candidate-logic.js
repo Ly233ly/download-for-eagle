@@ -260,6 +260,35 @@
         return candidates[0] || "";
     }
 
+    function chooseStructuredVideoPageUrl(currentValue, signals = {}) {
+        let current;
+        try { current = new URL(String(currentValue || "")); } catch (_error) { return ""; }
+        if (!["http:", "https:"].includes(current.protocol)) return "";
+        const ogType = String(signals.ogType || "").trim().toLowerCase();
+        const twitterCard = String(signals.twitterCard || "").trim().toLowerCase();
+        const validMediaUrl = value => {
+            try { return ["http:", "https:"].includes(new URL(String(value || ""), current.href).protocol); }
+            catch (_error) { return false; }
+        };
+        const declaresVideo = /^video(?:[.:]|$)/i.test(ogType)
+            || twitterCard === "player"
+            || validMediaUrl(signals.playerUrl)
+            || validMediaUrl(signals.videoUrl);
+        if (!declaresVideo) return "";
+
+        let page;
+        try { page = new URL(String(signals.canonicalUrl || current.href), current.href); }
+        catch (_error) { page = new URL(current.href); }
+        if (page.origin !== current.origin || !["http:", "https:"].includes(page.protocol)) {
+            page = new URL(current.href);
+        }
+        page.hash = "";
+        page.search = "";
+        page.pathname = page.pathname.replace(/\/+$/, "") || "/";
+        if (page.pathname === "/") return "";
+        return page.href;
+    }
+
     function selectContentTitle(signals = {}) {
         const fallback = String(signals.fallback || "").replace(/\s+/g, " ").trim().slice(0, 220);
         const noisyExact = /^(?:显示更多|展开|收起|播放|暂停|重播|静音|取消静音|全屏|退出全屏|more|show more|play|pause|replay|mute|unmute|fullscreen)$/i;
@@ -439,6 +468,7 @@
         douyinCandidateTitle,
         selectPrimaryPageVideo,
         chooseContentPageUrl,
+        chooseStructuredVideoPageUrl,
         selectContentTitle,
         createBoundedScheduler,
         ensureContentDiscovery,

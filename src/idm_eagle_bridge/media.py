@@ -982,7 +982,14 @@ class MediaCoordinator:
             f"deno:{deno}",
             "--get-url",
             "--format",
-            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]",
+            (
+                "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+                "bestvideo[ext=mp4]+bestaudio[ext=mp4]/"
+                "best[ext=mp4]/"
+                "bestvideo[ext=mp4]+bestaudio/"
+                "bestvideo+bestaudio/"
+                "best"
+            ),
         ]
         user_agent = _safe_text(headers.get("user-agent"), 500)
         referer = _safe_text(headers.get("referer"), 2048)
