@@ -482,19 +482,12 @@
     function partitionGroups(groups, options = {}) {
         const all = Array.isArray(groups) ? groups : [];
         const showSegments = Boolean(options.showSegments);
-        const resolverScopes = new Set(all
-            .filter(group => group?.resolvers?.some(item => item.resolver === "page"))
-            .map(group => `${group.tabId ?? 0}:${group.sourceDomain || "page"}`));
-        const resolverInScope = group => resolverScopes.has(`${group?.tabId ?? 0}:${group?.sourceDomain || "page"}`);
-        const unboundPlayback = group => Boolean(group
-            && resolverInScope(group)
-            && group.confidence === "isolated"
-            && !group.resolvers?.length
-            && group.items?.length
-            && group.items.every(item => ["video", "audio", "hls", "dash"].includes(item.kind)));
-        const technicalReason = group => group?.segmentOnly ? "segment"
-            : group?.fallbackOnly && resolverInScope(group) ? "fallback"
-                : unboundPlayback(group) ? "unbound_playback" : "";
+        // One page resolver only proves that one content item is available.
+        // It does not prove that every other complete media request in the
+        // same tab/domain is a duplicate: feeds, boards and galleries can
+        // legitimately contain several independent videos. Hide only groups
+        // that are structurally known to contain transport fragments.
+        const technicalReason = group => group?.segmentOnly ? "segment" : "";
         const hidden = group => Boolean(technicalReason(group));
         const hiddenSegmentCount = showSegments ? 0 : all.filter(hidden).length;
         return {

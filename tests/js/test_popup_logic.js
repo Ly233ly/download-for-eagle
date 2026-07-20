@@ -291,8 +291,12 @@ function candidate(overrides = {}) {
     });
     const groups = logic.groupCandidates([reconstructedFallback, pageResolver]);
     const partitioned = logic.partitionGroups(groups);
-    assert.deepStrictEqual(partitioned.visible.map(group => group.title), ["真实帖子视频"], "a stable page resolver must replace reconstructed transport fallbacks in the default list");
-    assert.strictEqual(partitioned.hiddenSegmentCount, 1, "the fallback stays available through the technical-fragment disclosure");
+    assert.deepStrictEqual(
+        partitioned.visible.map(group => group.title).sort(),
+        ["Instagram 视频 · 10 秒", "真实帖子视频"].sort(),
+        "a page resolver must not hide another complete media candidate without a shared content identity"
+    );
+    assert.strictEqual(partitioned.hiddenSegmentCount, 0, "a reconstructed complete media URL is not a transport fragment");
     assert.strictEqual(logic.partitionGroups(groups, { showSegments: true }).visible.length, 2);
 }
 
@@ -330,20 +334,17 @@ function candidate(overrides = {}) {
     assert.strictEqual(groups.length, 15, "the raw capture still keeps auditable network resources before presentation partitioning");
 
     const defaultView = logic.partitionGroups(groups);
-    assert.deepStrictEqual(
-        defaultView.visible.map(group => group.title),
-        pageResolvers.map(item => item.title),
-        "content-bound page candidates must replace ambiguous playback manifests in the default list"
-    );
-    assert.strictEqual(defaultView.hiddenSegmentCount, 12, "every unbound playback resource must leave the default information path");
+    assert.strictEqual(defaultView.visible.length, 15, "a multi-video page must keep complete manifests visible beside page resolvers");
+    assert.deepStrictEqual(defaultView.visible.slice(0, 3).map(group => group.title), pageResolvers.map(item => item.title));
+    assert.strictEqual(defaultView.hiddenSegmentCount, 0, "a complete manifest must not be hidden by an unrelated page resolver");
 
     const diagnosticView = logic.partitionGroups(groups, { showSegments: true });
     const technical = diagnosticView.visible.filter(group => group.technicalOnly);
-    assert.strictEqual(technical.length, 12, "the disclosure keeps ambiguous resources available as compact technical diagnostics");
+    assert.strictEqual(technical.length, 0, "complete media must remain selectable instead of being downgraded to diagnostics");
     assert.strictEqual(
-        logic.validateSelection(technical[0], logic.createDefaultSelection(technical[0]), { paired: true }).code,
-        "unbound_playback",
-        "an ambiguous playback URL must not create a download for the wrong page video"
+        logic.validateSelection(defaultView.visible[3], logic.createDefaultSelection(defaultView.visible[3]), { paired: true }).route,
+        "desktop",
+        "a user-selected complete manifest must remain downloadable"
     );
 
     const manifestWithoutBoundContent = logic.groupCandidates([unboundPlayback[0]]);

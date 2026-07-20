@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [string]$Version = "1.2.9",
+    [string]$Version = "1.2.10",
     [switch]$SkipTests,
     [switch]$SkipFfmpegFetch,
     [switch]$SkipYoutubeResolverFetch
@@ -43,8 +43,8 @@ function Invoke-Checked([string]$Label, [scriptblock]$Action) {
     if ($LASTEXITCODE -ne 0) { throw "$Label 失败，退出码 $LASTEXITCODE" }
 }
 
-if ($Version -ne "1.2.9") {
-    throw "本分支只允许构建已经同步版本号的 1.2.9。"
+if ($Version -ne "1.2.10") {
+    throw "本分支只允许构建已经同步版本号的 1.2.10。"
 }
 
 if (-not $SkipTests) {
@@ -97,7 +97,7 @@ Invoke-Checked "安装固定 PyInstaller 6.21.0" { & $venvPython -m pip install 
 $installedVersion = (& $venvPython -m PyInstaller --version).Trim()
 if ($installedVersion -ne "6.21.0") { throw "PyInstaller 版本错误：$installedVersion" }
 
-$buildRoot = Reset-GeneratedDirectory (Join-Path $projectRoot "build\release-1.2.9")
+$buildRoot = Reset-GeneratedDirectory (Join-Path $projectRoot "build\release-1.2.10")
 $pyiDist = Join-Path $buildRoot "dist"
 $pyiWork = Join-Path $buildRoot "work"
 New-Item -ItemType Directory -Path $pyiDist, $pyiWork -Force | Out-Null
@@ -155,6 +155,13 @@ New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
 foreach ($directory in @("assets", "chrome-extension", "docs", "launcher", "licenses", "src", "tests", "third_party")) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $directory) -Destination $sourceRoot -Recurse -Force
 }
+# Tests and local source runs create Python bytecode caches. They are neither
+# corresponding source nor runtime payload, so keep them out of the share ZIP.
+Get-ChildItem -LiteralPath $sourceRoot -Directory -Recurse -Force -Filter "__pycache__" |
+    Sort-Object FullName -Descending |
+    Remove-Item -Recurse -Force
+Get-ChildItem -LiteralPath $sourceRoot -File -Recurse -Force -Include "*.pyc", "*.pyo" |
+    Remove-Item -Force
 $currentVerification = Join-Path $sourceRoot "docs\RELEASE_VERIFICATION_$Version.md"
 if (Test-Path -LiteralPath $currentVerification -PathType Leaf) {
     Remove-Item -LiteralPath $currentVerification -Force

@@ -260,6 +260,17 @@
         return candidates[0] || "";
     }
 
+    function chooseNearbyContentPageUrl(currentValue, linkGroups) {
+        const currentPage = chooseContentPageUrl(currentValue, []);
+        for (const links of Array.isArray(linkGroups) ? linkGroups : []) {
+            for (const value of Array.isArray(links) ? links : []) {
+                const linkedPage = chooseContentPageUrl(value, []);
+                if (linkedPage && linkedPage !== currentPage) return linkedPage;
+            }
+        }
+        return currentPage;
+    }
+
     function chooseStructuredVideoPageUrl(currentValue, signals = {}) {
         let current;
         try { current = new URL(String(currentValue || "")); } catch (_error) { return ""; }
@@ -468,6 +479,7 @@
         douyinCandidateTitle,
         selectPrimaryPageVideo,
         chooseContentPageUrl,
+        chooseNearbyContentPageUrl,
         chooseStructuredVideoPageUrl,
         selectContentTitle,
         createBoundedScheduler,

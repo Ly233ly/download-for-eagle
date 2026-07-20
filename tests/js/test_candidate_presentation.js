@@ -68,6 +68,17 @@ if (instagramPermalink !== "https://www.instagram.com/p/Da9rBuVjAGK") {
 if (presentation.chooseContentPageUrl("https://example.com/", []) !== "") {
     throw new Error("A generic feed without a stable content permalink must not be guessed");
 }
+const nearbyGridVideo = presentation.chooseNearbyContentPageUrl("https://example.com/videos/current", [
+    [],
+    ["https://example.com/videos/related?tracking=1"],
+    ["https://example.com/videos/far-away"]
+]);
+if (nearbyGridVideo !== "https://example.com/videos/related") {
+    throw new Error("The closest distinct content link must identify a related video card");
+}
+if (presentation.chooseNearbyContentPageUrl("https://example.com/videos/current", [[], []]) !== "https://example.com/videos/current") {
+    throw new Error("A primary player without a nearer content link must keep the current work page");
+}
 if (presentation.chooseContentPageUrl("https://x.com/user/status/123?tracking=1", []) !== "https://x.com/user/status/123") {
     throw new Error("A single-content page may safely use its own canonical URL for desktop resolution");
 }

@@ -7,9 +7,9 @@
 - Chrome 扩展为 Manifest V3；Eagle 只通过官方本地 Web API 访问。
 - 发行后端使用 PyInstaller 6.21.0 `onedir` 打包，包含 Python 3.14.4 和 Tcl/Tk。
 
-## 1.2.9 实现边界
+## 1.2.10 实现边界
 
-1.0.0 曾按 [cat-catch 迁移总计划](docs/CAT_CATCH_MIGRATION_PLAN.md) 和 [功能对照矩阵](docs/FEATURE_PARITY_MATRIX.md) 完成研究与迁移。固定上游源码保存在 `third_party/cat-catch/source/` 作为 GPL 对应源码；1.2.9 活动浏览器载荷不再复制完整上游工具箱。YouTube MSE/SABR 页面由 `youtube-content.js` 注入主世界适配器读取播放器格式目录；通用 blob/MSE 页面从每个播放器最近内容容器或页面明确的视频元数据提供稳定永久链接、标题与预览，同页无法关联具体内容的播放请求只进入技术区。信息流扫描使用不可饿死的合并调度，popup 会恢复扩展重载后保持打开页面的发现脚本。浏览器只负责发现和提交；无直链候选由桌面固定 yt-dlp/Deno 解析，页面分轨按兼容容器逐级选择，FFmpeg 继续执行实际下载与合并。
+1.0.0 曾按 [cat-catch 迁移总计划](docs/CAT_CATCH_MIGRATION_PLAN.md) 和 [功能对照矩阵](docs/FEATURE_PARITY_MATRIX.md) 完成研究与迁移。固定上游源码保存在 `third_party/cat-catch/source/` 作为 GPL 对应源码；1.2.10 活动浏览器载荷不再复制完整上游工具箱。YouTube MSE/SABR 页面由 `youtube-content.js` 注入主世界适配器读取播放器格式目录；通用 blob/MSE 页面从播放器向外寻找最近的稳定内容链接，分别绑定主作品与相关内容。同标签页、同来源域名不是内容去重依据；完整 MP4/HLS/DASH 保持可见，只有结构已确认的传输分片进入技术区。该逻辑不包含 Pinterest 或其他站点域名分支。浏览器只负责发现和提交；无直链候选由桌面固定 yt-dlp/Deno 解析，FFmpeg 继续执行实际下载与合并。
 
 - 浏览器捕获层只负责发现资源、形成媒体候选组、展示选择并经认证回环接口提交计划；专用 bridge 不调用 `chrome.downloads`。
 - 本机后端负责所有普通直链、分轨、HLS/DASH 下载，以及持久状态、FFmpeg/ffprobe、输出验证和现有 Eagle 导入。
@@ -40,7 +40,7 @@
 
 ## 发行结构
 
-`release/下载中转站-1.2.9-Windows-x64/下载中转站-1.2.9` 包含：
+`release/下载中转站-1.2.10-Windows-x64/下载中转站-1.2.10` 包含：
 
 - `一键安装.exe`：接收者唯一需要运行的入口；
 - `app/`：安装器载荷，包括两个 C# 启动器、Chrome/Firefox 扩展、FFmpeg/ffprobe、yt-dlp/Deno 和独立后端；

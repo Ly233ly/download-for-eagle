@@ -338,6 +338,25 @@
         }) || String(document.title || "网页视频").slice(0, 220);
     }
 
+    function nearbyVideoContent(video, logic) {
+        const currentPageUrl = logic.chooseContentPageUrl(location.href, []);
+        let element = video;
+        for (let depth = 0; element && depth < 16; depth += 1, element = element.parentElement) {
+            const links = [];
+            if (element.matches?.("a[href]") && element.href) links.push(element.href);
+            links.push(...Array.from(element.querySelectorAll?.("a[href]") || [], link => link.href).slice(0, 64));
+            const linkedPageUrl = logic.chooseNearbyContentPageUrl?.(location.href, [links]) || "";
+            if (linkedPageUrl && linkedPageUrl !== currentPageUrl) {
+                return {
+                    container: element.matches?.("a[href]") ? element.parentElement || element : element,
+                    pageUrl: linkedPageUrl
+                };
+            }
+        }
+        const container = video.closest("article, [role='article'], [role='dialog'], figure") || video.parentElement;
+        return { container, pageUrl: currentPageUrl };
+    }
+
     function discoverPageResolvers() {
         if (window.top !== window) return;
         const logic = globalThis.EagleBridgeCandidateLogic;
@@ -378,13 +397,13 @@
                 ])
                 : "";
             if (douyinHost && !explicitDouyinVideoId) continue;
-            const container = douyinItem
-                || video.closest("article, [role='article'], [role='dialog'], figure")
-                || video.parentElement;
-            const links = Array.from(container?.querySelectorAll?.("a[href]") || [], link => link.href).slice(0, 64);
+            const content = douyinItem
+                ? { container: douyinItem, pageUrl: "" }
+                : nearbyVideoContent(video, logic);
+            const container = content.container;
             const pageUrl = explicitDouyinVideoId
                 ? `https://www.douyin.com/video/${explicitDouyinVideoId}`
-                : logic.chooseContentPageUrl(location.href, links);
+                : content.pageUrl;
             if (!pageUrl || _pageResolverSent.has(pageUrl)) continue;
             const duration = Number(video.duration);
             const douyinVideoId = explicitDouyinVideoId || pageUrl.match(/\/video\/(\d+)$/)?.[1] || "";

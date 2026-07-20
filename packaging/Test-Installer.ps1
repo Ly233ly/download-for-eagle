@@ -9,7 +9,7 @@ Set-StrictMode -Version Latest
 
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 if ([string]::IsNullOrWhiteSpace($PackageRoot)) {
-    $PackageRoot = Join-Path $projectRoot "release\下载中转站-1.2.9-Windows-x64\下载中转站-1.2.9"
+    $PackageRoot = Join-Path $projectRoot "release\下载中转站-1.2.10-Windows-x64\下载中转站-1.2.10"
 }
 $PackageRoot = [IO.Path]::GetFullPath($PackageRoot)
 $installer = Join-Path $PackageRoot "一键安装.exe"
@@ -17,7 +17,7 @@ if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "找不到�
 
 $runId = [Guid]::NewGuid().ToString("N")
 $scratchRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot ".scratch"))
-$testRoot = [IO.Path]::GetFullPath((Join-Path $scratchRoot ("installer-1.2.9-" + $runId)))
+$testRoot = [IO.Path]::GetFullPath((Join-Path $scratchRoot ("installer-1.2.10-" + $runId)))
 $safePrefix = $scratchRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 if (-not $testRoot.StartsWith($safePrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw "测试目录不在项目专用临时目录中。"
@@ -91,16 +91,16 @@ try {
     }
 
     $evidence = [ordered]@{
-        version = "1.2.9"
+        version = "1.2.10"
         testedAtUtc = [DateTime]::UtcNow.ToString("o")
-        packageRoot = "release/下载中转站-1.2.9-Windows-x64/下载中转站-1.2.9"
+        packageRoot = "release/下载中转站-1.2.10-Windows-x64/下载中转站-1.2.10"
         fresh = $fresh
         update = $update
         rollback = $rollback
         uninstall = $uninstall
     }
     if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
-        $EvidencePath = Join-Path $scratchRoot "installer-1.2.9-evidence.json"
+        $EvidencePath = Join-Path $scratchRoot "installer-1.2.10-evidence.json"
     }
     $evidence | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $EvidencePath -Encoding UTF8
     $evidence | ConvertTo-Json -Depth 6
